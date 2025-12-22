@@ -1,4 +1,3 @@
-
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -53,45 +52,67 @@ df_sorted = df_filtered.sort_values(by=grenzkosten_col)
 # Dies ist die Summe der Leistung der Kraftwerke in der sortierten Reihenfolge.
 df_sorted['Kumulierte Leistung [MW]'] = df_sorted[leistung_col].cumsum()
 
-# Vorbereitung für das Plotten
-# Erstellen von Stufen für die Treppenfunktion der Merit-Order
-x_values = np.zeros(len(df_sorted) * 2)
-y_values = np.zeros(len(df_sorted) * 2)
-
-# Die erste Stufe beginnt bei 0 Leistung
-x_values[0] = 0
-y_values[0] = df_sorted[grenzkosten_col].iloc[0]
-
-# Erzeugen der Treppenstufen
-for i in range(len(df_sorted) - 1):
-    x_values[2 * i + 1] = df_sorted['Kumulierte Leistung [MW]'].iloc[i]
-    y_values[2 * i + 1] = df_sorted[grenzkosten_col].iloc[i]
-    x_values[2 * i + 2] = df_sorted['Kumulierte Leistung [MW]'].iloc[i]
-    y_values[2 * i + 2] = df_sorted[grenzkosten_col].iloc[i+1]
-
-# Letzter Punkt der Kurve
-x_values[-1] = df_sorted['Kumulierte Leistung [MW]'].iloc[-1]
-y_values[-1] = df_sorted[grenzkosten_col].iloc[-1]
-
-
 # 5. Grafische Darstellung mit Matplotlib
 plt.style.use('seaborn-v0_8-whitegrid')
 fig, ax = plt.subplots(figsize=(15, 8))
 
-# Zeichnen der Merit-Order-Kurve
-ax.plot(x_values, y_values, drawstyle='steps-post', label='Merit-Order Kurve', color='royalblue', linewidth=2)
+# Definition der Farben für die verschiedenen Energieträger
+# Sie können diese Farben nach Belieben anpassen
+farben = {
+    'Abfall': 'saddlebrown',
+    'Braunkohle': 'black',
+    'Erdgas': 'skyblue',
+    'Mineralölprodukte': 'orange',
+    'Steinkohle': 'dimgray',
+    'Wärme': 'magenta',
+    'Sonstige Energieträger (nicht erneuerbar)': 'purple',
+    'Sonstige': 'lightgrey'
+}
+
+# Vorbereitung für das Plotten
+vorherige_kumulierte_leistung = 0
+vorherige_grenzkosten = 0
+labels_hinzugefuegt = set()
+
+# Zeichnen der Merit-Order-Kurve als saubere Stufenkurve
+for index, row in df_sorted.iterrows():
+    energietraeger = row[energietraeger_col]
+    grenzkosten = row[grenzkosten_col]
+    kumulierte_leistung = row['Kumulierte Leistung [MW]']
+    
+    farbe = farben.get(energietraeger, 'grey') # Standardfarbe, falls Energieträger nicht im Dictionary ist
+    
+    label = energietraeger if energietraeger not in labels_hinzugefuegt else None
+    
+    # Vertikale Linie von der vorherigen zur aktuellen Kostenstufe
+    ax.vlines(x=vorherige_kumulierte_leistung, ymin=vorherige_grenzkosten, ymax=grenzkosten, 
+              color=farbe, linestyle='-', linewidth=2)
+    
+    # Horizontale Linie für das Kraftwerk
+    ax.hlines(y=grenzkosten, xmin=vorherige_kumulierte_leistung, xmax=kumulierte_leistung, 
+              color=farbe, linestyle='-', linewidth=2, label=label)
+
+    if label:
+        labels_hinzugefuegt.add(energietraeger)
+        
+    # Werte für die nächste Iteration speichern
+    vorherige_kumulierte_leistung = kumulierte_leistung
+    vorherige_grenzkosten = grenzkosten
 
 # Titel und Achsenbeschriftungen
-ax.set_title('Merit-Order für die 50Hertz Regelzone', fontsize=18, fontweight='bold')
+ax.set_title('Merit-Order für die 50Hertz Regelzone nach Energieträgern', fontsize=18, fontweight='bold')
 ax.set_xlabel('Kumulierte Leistung [MW]', fontsize=12)
 ax.set_ylabel('Grenzkosten [EUR/MWh]', fontsize=12)
+
+# Legende hinzufügen
+ax.legend(title='Energieträger')
 
 # Gitternetz und Layout
 ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 plt.tight_layout()
 
 # Speichern der Grafik
-output_filename = 'Merit_Order_50Hz.png'
+output_filename = 'Merit_Order_50Hz_farbig.png'
 plt.savefig(output_filename, dpi=300)
 
 # Anzeigen der Grafik
