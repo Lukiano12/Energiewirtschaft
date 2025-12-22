@@ -115,11 +115,5 @@ ax.legend(title='Energieträger')
 ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 plt.tight_layout()
 
-# Speichern der Grafik
-output_filename = 'Merit_Order_50Hz_Balken.png'
-plt.savefig(output_filename, dpi=300)
-
 # Anzeigen der Grafik
 plt.show()
-
-print(f"Die Merit-Order-Grafik wurde erfolgreich als '{output_filename}' gespeichert.")
