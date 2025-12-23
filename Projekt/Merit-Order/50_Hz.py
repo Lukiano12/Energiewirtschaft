@@ -1,6 +1,10 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import tkinter as tk
+from tkinter import messagebox
+from tkcalendar import Calendar
+from datetime import datetime, date
 
 # --- 1. DATEN LADEN ---
 
@@ -51,110 +55,101 @@ df_sorted = df_filtered.sort_values(by=grenzkosten_col)
 df_sorted['Kumulierte Leistung [MW]'] = df_sorted[leistung_col].cumsum()
 
 
-# --- 3. BENUTZEREINGABE UND PREISERMITTLUNG FÜR EINEN TAG ---
+# --- 3. PREISERMITTLUNG UND GRAFISCHE DARSTELLUNG (GUI-BASIERT) ---
 
-while True:
-    try:
-        datum_str = input("Bitte geben Sie einen Tag ein (Format: YYYY-MM-DD): ")
-        tag = pd.to_datetime(datum_str).date()
-        
-        # Lastdaten für den gewählten Tag filtern
-        last_am_tag = df_last[df_last.index.date == tag]
-        
-        if last_am_tag.empty:
-            print(f"Für den {tag.strftime('%d.%m.%Y')} wurden keine Lastdaten gefunden. Bitte versuchen Sie es erneut.")
-            continue
+def analyze_and_plot_for_date(selected_date):
+    """
+    Diese Funktion führt die Analyse für ein ausgewähltes Datum durch
+    und erstellt die grafische Darstellung.
+    """
+    tag = selected_date
 
-        # Spitzenlast (maximale Last) an diesem Tag ermitteln
-        spitzenlast_mw = last_am_tag['Last [MW]'].max()
-        break
-    except ValueError:
-        print("Ungültiges Datumsformat. Bitte verwenden Sie 'YYYY-MM-DD'.")
+    # Lastdaten für den gewählten Tag filtern
+    last_am_tag = df_last[df_last.index.date == tag]
 
-# Finde das preissetzende Kraftwerk für die Spitzenlast
-preissetzendes_kw = df_sorted[df_sorted['Kumulierte Leistung [MW]'] >= spitzenlast_mw]
+    if last_am_tag.empty:
+        messagebox.showinfo("Keine Daten", f"Für den {tag.strftime('%d.%m.%Y')} wurden keine Lastdaten gefunden.")
+        return
 
-if preissetzendes_kw.empty:
-    strompreis = df_sorted[grenzkosten_col].max()
-    print(f"\nWarnung: Die Spitzenlast von {spitzenlast_mw:.2f} MW übersteigt die verfügbare Gesamtleistung.")
-else:
-    strompreis = preissetzendes_kw.iloc[0][grenzkosten_col]
+    # Spitzenlast (maximale Last) an diesem Tag ermitteln
+    spitzenlast_mw = last_am_tag['Last [MW]'].max()
 
-print("-" * 50)
-print(f"Analyse für den {tag.strftime('%d.%m.%Y')}:")
-print(f"Spitzenlast an diesem Tag: {spitzenlast_mw:.2f} MW")
-print(f"Resultierender Spitzen-Strompreis: {strompreis:.2f} EUR/MWh")
-print("-" * 50)
+    # Finde das preissetzende Kraftwerk für die Spitzenlast
+    preissetzendes_kw = df_sorted[df_sorted['Kumulierte Leistung [MW]'] >= spitzenlast_mw]
 
+    if preissetzendes_kw.empty:
+        strompreis = df_sorted[grenzkosten_col].max()
+        print(f"\nWarnung: Die Spitzenlast von {spitzenlast_mw:.2f} MW übersteigt die verfügbare Gesamtleistung.")
+    else:
+        strompreis = preissetzendes_kw.iloc[0][grenzkosten_col]
 
-# --- 4. GRAFISCHE DARSTELLUNG ---
+    print("-" * 50)
+    print(f"Analyse für den {tag.strftime('%d.%m.%Y')}:")
+    print(f"Spitzenlast an diesem Tag: {spitzenlast_mw:.2f} MW")
+    print(f"Resultierender Spitzen-Strompreis: {strompreis:.2f} EUR/MWh")
+    print("-" * 50)
 
-plt.style.use('seaborn-v0_8-whitegrid')
-fig, ax = plt.subplots(figsize=(15, 8))
+    # --- Grafische Darstellung ---
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, ax = plt.subplots(figsize=(15, 8))
 
-# Definition der Farben für die verschiedenen Energieträger
-# Sie können diese Farben nach Belieben anpassen
-farben = {
-    'Abfall': 'saddlebrown',
-    'Braunkohle': 'black',
-    'Erdgas': 'skyblue',
-    'Mineralölprodukte': 'orange',
-    'Steinkohle': 'dimgray',
-    'Wärme': 'magenta',
-    'Sonstige Energieträger (nicht erneuerbar)': 'purple',
-    'Sonstige': 'lightgrey'
-}
+    farben = {
+        'Abfall': 'saddlebrown', 'Braunkohle': 'black', 'Erdgas': 'skyblue',
+        'Mineralölprodukte': 'orange', 'Steinkohle': 'dimgray', 'Wärme': 'magenta',
+        'Sonstige Energieträger (nicht erneuerbar)': 'purple', 'Sonstige': 'lightgrey'
+    }
 
-# Vorbereitung für das Plotten
-vorherige_kumulierte_leistung = 0
-labels_hinzugefuegt = set()
+    vorherige_kumulierte_leistung = 0
+    labels_hinzugefuegt = set()
 
-# Zeichnen der Merit-Order als Balkendiagramm
-for index, row in df_sorted.iterrows():
-    energietraeger = row[energietraeger_col]
-    grenzkosten = row[grenzkosten_col]
-    leistung = row[leistung_col]  # Individuelle Leistung des Kraftwerks
+    for index, row in df_sorted.iterrows():
+        energietraeger = row[energietraeger_col]
+        grenzkosten = row[grenzkosten_col]
+        leistung = row[leistung_col]
+        if leistung <= 0: continue
+        farbe = farben.get(energietraeger, 'grey')
+        label = energietraeger if energietraeger not in labels_hinzugefuegt else None
+        ax.bar(x=vorherige_kumulierte_leistung, height=grenzkosten, width=leistung,
+               color=farbe, label=label, align='edge')
+        if label: labels_hinzugefuegt.add(energietraeger)
+        vorherige_kumulierte_leistung += leistung
+
+    ax.axvline(x=spitzenlast_mw, color='red', linestyle='--', linewidth=2, label=f'Spitzenlast ({spitzenlast_mw:.0f} MW)')
+    ax.axhline(y=strompreis, color='red', linestyle='--', linewidth=2, xmax=spitzenlast_mw / ax.get_xlim()[1])
+
+    ax.set_title(f'Merit-Order und Preisfindung für den {tag.strftime("%d.%m.%Y")}', fontsize=18, fontweight='bold')
+    ax.set_xlabel('Kumulierte Leistung [MW]', fontsize=12)
+    ax.set_ylabel('Grenzkosten [EUR/MWh]', fontsize=12)
+    ax.set_ylim(bottom=0)
+    ax.legend(title='Legende')
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+    plt.show()
+
+def on_date_selected():
+    """Wird aufgerufen, wenn der Benutzer auf den Button klickt."""
+    # Rufe das Datum als datetime.date-Objekt ab.
+    selected_date = cal.selection_get()
     
-    # Überspringe Kraftwerke ohne Leistung, um Fehler zu vermeiden
-    if leistung <= 0:
-        continue
+    # Manuelle Überprüfung, ob das Datum im Jahr 2024 liegt.
+    if selected_date and selected_date.year == 2024:
+        analyze_and_plot_for_date(selected_date)
+    else:
+        messagebox.showwarning("Ungültiges Datum", "Bitte wählen Sie ein Datum im Jahr 2024 aus.")
 
-    farbe = farben.get(energietraeger, 'grey')  # Standardfarbe
-    
-    label = energietraeger if energietraeger not in labels_hinzugefuegt else None
-    
-    # Zeichne einen Balken für das Kraftwerk
-    ax.bar(x=vorherige_kumulierte_leistung,
-           height=grenzkosten,
-           width=leistung,
-           color=farbe,
-           label=label,
-           align='edge')  # 'edge' richtet den Balken an der linken Kante aus
+# --- 4. GUI ERSTELLEN UND STARTEN ---
+root = tk.Tk()
+root.title("Datumsauswahl für Merit-Order")
 
-    if label:
-        labels_hinzugefuegt.add(energietraeger)
-        
-    # Aktualisiere die kumulierte Leistung für die Position des nächsten Balkens
-    vorherige_kumulierte_leistung += leistung
+# Kalender-Widget erstellen. Die Größe wird über die Schriftart angepasst.
+# Die Datumseinschränkung (mindate/maxdate) wird entfernt, um das Auswahlproblem zu beheben.
+cal = Calendar(root, selectmode='day', year=2024, month=1, day=1,
+               font="Arial 14")
+cal.pack(pady=20, padx=20)
 
-# NEU: Spitzenlast und Preis einzeichnen
-ax.axvline(x=spitzenlast_mw, color='red', linestyle='--', linewidth=2, label=f'Spitzenlast ({spitzenlast_mw:.0f} MW)')
-ax.axhline(y=strompreis, color='red', linestyle='--', linewidth=2, xmax=spitzenlast_mw / ax.get_xlim()[1])
+# Button zum Bestätigen der Auswahl
+select_button = tk.Button(root, text="Analyse für ausgewähltes Datum starten", command=on_date_selected)
+select_button.pack(pady=10)
 
-# Titel und Achsenbeschriftungen
-ax.set_title(f'Merit-Order und Preisfindung für den {tag.strftime("%d.%m.%Y")}', fontsize=18, fontweight='bold')
-ax.set_xlabel('Kumulierte Leistung [MW]', fontsize=12)
-ax.set_ylabel('Grenzkosten [EUR/MWh]', fontsize=12)
-
-# Y-Achse bei 0 beginnen lassen
-ax.set_ylim(bottom=0)
-
-# Legende hinzufügen
-ax.legend(title='Legende')
-
-# Gitternetz und Layout
-ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-plt.tight_layout()
-
-# Anzeigen der Grafik
-plt.show()
+# Start der GUI-Schleife
+root.mainloop()
