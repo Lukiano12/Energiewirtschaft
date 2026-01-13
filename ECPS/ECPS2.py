@@ -1,73 +1,112 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-import os  # NEW IMPORT for os
+import os
+import io
 
+# --- Load and process Experimental.csv ---
 # Pfad zur CSV-Datei
-file_path = r'c:\Users\User\Desktop\Energiewirtschaft\ECPS\Task2.csv'
+file_path_exp = r'c:\Users\User\Desktop\Energiewirtschaft\ECPS\Experimental.csv'
 
 # CSV-Datei einlesen
 # Der Separator ist ein Semikolon und das Dezimaltrennzeichen ein Punkt.
-df = pd.read_csv(file_path, delimiter=';', decimal='.')
+df_exp = pd.read_csv(file_path_exp, delimiter=';', decimal='.')
 
 # Daten für die Achsen extrahieren
-x_axis = df['mean current density in A/cm^2']
-y_axis = df['cell voltage in V']
-
-# Plot erstellen
-plt.figure(figsize=(10, 6))
-plt.plot(x_axis, y_axis, marker='o', linestyle='-')
-
-# Titel und Achsenbeschriftungen hinzufügen
-plt.title('Cell Voltage vs. Current Density')
-plt.xlabel('Mean Current Density in A/cm²')
-plt.ylabel('Cell Voltage in V')
-
-# Gitter hinzufügen
-plt.grid(True)
+x_exp = df_exp['mean current density in A/cm^2']
+y_exp = df_exp['cell voltage in V']
 
 
-# --- NEW TASK: Plot and analyze Polcurve.csv ---
-
+# --- Load and process Polcurve.csv ---
 # Path to the new CSV file
 file_path_pol = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Polcurve.csv')
 
 # Read the CSV file. Note: The delimiter is a comma and the decimal separator is also a comma.
 df_pol = pd.read_csv(file_path_pol, delimiter=',', decimal=',')
 
-# Extract data for the axes
-x_pol = df_pol['CellCurrentDensity [A/cm2]']
-y_pol = df_pol['CellVoltage [V]']
+# Calculate the mean of 'CellVoltage [V]' for each unique 'CellCurrentDensity [A/cm2]'
+df_pol_mean = df_pol.groupby('CellCurrentDensity [A/cm2]')['CellVoltage [V]'].mean().reset_index()
 
-# Create the new plot
-plt.figure(figsize=(10, 6))
-plt.plot(x_pol, y_pol, marker='o', linestyle='--', label='Experimental Data')
-
-# Add title and labels
-plt.title('Fuel Cell Polarization Curve')
+# --- Create the combined plot ---
+plt.figure(figsize=(12, 7))
+plt.plot(x_exp, y_exp, marker='o', linestyle='-', label='Average Curve')
+plt.plot(df_pol_mean['CellCurrentDensity [A/cm2]'], df_pol_mean['CellVoltage [V]'], marker='.', linestyle='--', label='Experimental Curve')
+plt.title('Combined Plot: Experimental vs. Averaged Polcurve')
 plt.xlabel('Current Density [A/cm²]')
 plt.ylabel('Cell Voltage [V]')
 plt.legend()
 plt.grid(True)
 
-# --- Analysis and Answers ---
-#
-# What do you notice? Why are there two “branches”?
-#
-# You notice that the plot has two distinct curves or "branches", creating a loop. This is called hysteresis.
-# The experiment was likely run by first increasing the current from 0 to a maximum value (measuring the "forward" branch)
-# and then decreasing it back to 0 (measuring the "backward" branch).
-# The cell's voltage response is different in each direction because its internal state (e.g., water content in the
-# membrane, catalyst state) changes during operation and does not immediately return to its initial state.
-# This memory effect causes the two different branches.
-#
-# Why is current density [A/cm²] used and not current [A]?
-#
-# Current density (Current / Area) is used to make the performance of different fuel cells comparable.
-# A large fuel cell will naturally produce a higher current [A] than a small one, even if they are built
-# with the same technology. By normalizing the current by the cell's active area, we get an intrinsic
-# performance metric (A/cm²) that is independent of the cell's physical size. This allows engineers
-# and scientists to compare the quality of different materials and designs on a level playing field.
-
-
 # Plot anzeigen
+plt.show()
+
+# --- Additional Data Processing and Plotting ---
+# Data from the user
+data = """I [mA]	U [V]	P (mW)	Efficiency
+0	0,75	0	60,98%
+5	0,731	3,655	59,43%
+10	0,713	7,13	57,97%
+15	0,698	10,47	56,75%
+20	0,683	13,66	55,53%
+25	0,671	16,775	54,55%
+30	0,659	19,77	53,58%
+35	0,647	22,645	52,60%
+40	0,635	25,4	51,63%
+45	0,624	28,08	50,73%
+50	0,614	30,7	49,92%
+55	0,604	33,22	49,11%
+60	0,595	35,7	48,37%
+65	0,585	38,025	47,56%
+70	0,576	40,32	46,83%
+75	0,567	42,525	46,10%
+80	0,557	44,56	45,28%
+85	0,547	46,495	44,47%
+90	0,536	48,24	43,58%
+"""
+
+# Read the data into a pandas DataFrame
+# The decimal separator is a comma, so we need to specify that.
+# The separator between columns is a tab.
+df = pd.read_csv(io.StringIO(data), sep='\\t', decimal=',')
+
+# Clean up column names
+df.columns = [col.strip() for col in df.columns]
+df = df.rename(columns={'I [mA]': 'Current (mA)', 'U [V]': 'Voltage (V)', 'P (mW)': 'Power (mW)'})
+
+
+# Convert 'Efficiency' from string with '%' to float
+df['Efficiency'] = df['Efficiency'].str.replace('%', '', regex=False).str.replace(',', '.', regex=False).astype(float) / 100
+
+# Create the plot
+fig, ax1 = plt.subplots(figsize=(10, 6))
+
+# Plot Voltage vs Current on the first y-axis
+color = 'tab:blue'
+ax1.set_xlabel('Current (mA)')
+ax1.set_ylabel('Voltage (V)', color=color)
+ax1.plot(df['Current (mA)'], df['Voltage (V)'], color=color, marker='o', label='Voltage (V)')
+ax1.tick_params(axis='y', labelcolor=color)
+ax1.grid(True)
+
+# Create a second y-axis for Efficiency
+ax2 = ax1.twinx()
+color = 'tab:red'
+ax2.set_ylabel('Efficiency', color=color)
+ax2.plot(df['Current (mA)'], df['Efficiency'], color=color, marker='x', linestyle='--', label='Efficiency')
+ax2.tick_params(axis='y', labelcolor=color)
+
+# Format the efficiency axis to show percentages
+ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0%}'))
+
+
+# Add a title
+plt.title('Voltage and Efficiency vs. Current')
+
+# Add legends
+# To combine legends from both axes, we get handles and labels from both
+handles1, labels1 = ax1.get_legend_handles_labels()
+handles2, labels2 = ax2.get_legend_handles_labels()
+ax1.legend(handles1 + handles2, labels1 + labels2, loc='upper right')
+
+
+# Show the plot
 plt.show()

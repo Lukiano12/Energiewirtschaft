@@ -4,3 +4,8 @@ openpyxl
 matplotlib
 scikit-learn
 tkcalendar
+seaborn
+geopandas
+contextily
+scipy
+shapely
