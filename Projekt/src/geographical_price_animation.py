@@ -28,81 +28,56 @@ output_dir = script_dir.parent / "output" / "excel"
 # --- Konfiguration ---
 ZONE_NAMES = ['50Hertz', 'TenneT', 'Amprion', 'TransnetBW']
 
-# --- 1. Geodaten generieren (Cutting-Methode) ---
+# --- 1. Geodaten generieren (Bundesländer-Mapping) ---
 def create_germany_zones():
-    print("Generiere Deutschland-Karte...")
-    germany = None
+    print("Generiere Deutschland-Karte (mit Glättung)...")
     
-    # VERSUCH 1: GeoPandas intern (für ältere Versionen < 1.0)
+    url = "https://raw.githubusercontent.com/isellsoap/deutschlandGeoJSON/main/2_bundeslaender/4_niedrig.geo.json"
+    
     try:
-        # Dies wirft in neuen Versionen einen Fehler, den fangen wir ab
-        world = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
-        germany = world[world.name == "Germany"].geometry.iloc[0]
+        states_gdf = gpd.read_file(url)
+        name_col = next((c for c in states_gdf.columns if c.lower() in ['name', 'name_1', 'gen', 'bundesland']), None)
+        if not name_col: return create_fallback_rectangles()
     except Exception:
-        pass # Weiter zu Versuch 2
-
-    # VERSUCH 2: Fallback Online Download (für GeoPandas 1.0+)
-    if germany is None:
-        print("  -> GeoPandas Dataset fehlt. Lade Deutschland-Umriss online...")
-        try:
-            # Stabile URL für Ländergrenzen (High Def nicht nötig, Low Res reicht)
-            url = "https://raw.githubusercontent.com/python-visualization/folium/master/examples/data/world-countries.json"
-            world = gpd.read_file(url)
-            # In diesem Datensatz heißt Deutschland meist "Germany" oder Code "DEU"
-            row = world[world['name'] == 'Germany']
-            if row.empty:
-                row = world[world['id'] == 'DEU']
-            
-            if not row.empty:
-                germany = row.geometry.iloc[0]
-            else:
-                print("  -> FEHLER: Deutschland in Online-Daten nicht gefunden.")
-        except Exception as e:
-            print(f"  -> FEHLER beim Download: {e}")
-
-    # Notfall-Fallback
-    if germany is None:
-        print("  -> WARNUNG: Konnte keine Karte laden. Nutze Rechtecke.")
         return create_fallback_rectangles()
 
-    print("  -> Karte geladen. Schneide Zonen...")
-
-    # 2. Schnitt-Boxen definieren (Wir 'schneiden' Deutschland in Stücke)
-    # Die Koordinaten sind visuelle Annäherungen.
-    
-    # 50Hertz: Der Osten.
-    box_50hertz = box(10.8, 50.2, 16.0, 55.0)
-    
-    # TransnetBW: Der Südwesten (BaWü). 
-    box_transnet = box(7.0, 47.0, 10.2, 49.6) 
-    
-    # Amprion: Der Westen. Wir definieren eine Box und ziehen TransnetBW später ab.
-    box_amprion = box(5.5, 49.6, 9.8, 52.4) 
-    
-    # 3. Zonen ausschneiden (Intersection mit Deutschland-Form)
-    poly_50hertz = germany.intersection(box_50hertz)
-    poly_transnet = germany.intersection(box_transnet)
-    
-    # Amprion ohne Überlappung zu Transnet
-    poly_amprion = germany.intersection(box_amprion).difference(poly_transnet)
-    
-    # 4. TenneT ist der Rest (Norden + Bayern)
-    # Wir nehmen gesamt Deutschland und subtrahieren die anderen drei Teile.
-    others = poly_50hertz.union(poly_transnet).union(poly_amprion)
-    poly_tennet = germany.difference(others)
-    
-    # 5. Zusammenbauen
-    data = {
-        'zone': ['50Hertz', 'TransnetBW', 'Amprion', 'TenneT'],
-        'geometry': [poly_50hertz, poly_transnet, poly_amprion, poly_tennet]
+    # Mapping: Bundesland -> Regelzone (TSO)
+    tso_mapping = {
+        'Baden-Württemberg': 'TransnetBW',
+        'Bayern': 'TenneT',
+        'Berlin': '50Hertz',
+        'Brandenburg': '50Hertz',
+        'Bremen': 'TenneT',
+        'Hamburg': '50Hertz', 
+        'Hessen': 'TenneT',
+        'Mecklenburg-Vorpommern': '50Hertz',
+        'Niedersachsen': 'TenneT',
+        'Nordrhein-Westfalen': 'Amprion',
+        'Rheinland-Pfalz': 'Amprion',
+        'Saarland': 'Amprion',
+        'Sachsen': '50Hertz',
+        'Sachsen-Anhalt': '50Hertz',
+        'Schleswig-Holstein': 'TenneT',
+        'Thüringen': '50Hertz'
     }
+
+    states_gdf['zone'] = states_gdf[name_col].map(tso_mapping)
     
-    gdf = gpd.GeoDataFrame(data, crs="EPSG:4326")
+    # 1. Zusammenfassen (Dissolve)
+    zones_gdf = states_gdf.dropna(subset=['zone']).dissolve(by='zone').reset_index()
     
-    # Cleanup von Geometrie-Artefakten
-    gdf['geometry'] = gdf.simplify(0.01)
+    # 2. Bereinigen: Explode -> Filter kleine Inseln -> Re-Dissolve
+    #    Dies entfernt visuelles "Rauschen" an den Küsten
+    zones_exploded = zones_gdf.explode(index_parts=False)
+    # Behalte nur Polygone mit relevanter Größe (Grad^2)
+    zones_exploded = zones_exploded[zones_exploded.geometry.area > 0.02] 
+    zones_gdf = zones_exploded.dissolve(by='zone').reset_index()
     
-    return gdf
+    # 3. Glätten (Simplify) für den "Comic-Look" der Referenzgrafik
+    #    Toleranz 0.05 sorgt für glatte Kanten ohne Details
+    zones_gdf['geometry'] = zones_gdf.simplify(0.05)
+    
+    return zones_gdf[['zone', 'geometry']]
 
 def create_fallback_rectangles():
     zones_geodata = {
@@ -190,57 +165,99 @@ except Exception as e:
     print(f"FEHLER: {e}")
     sys.exit(1)
 
-# --- 5. Preise berechnen (Merit Order) ---
-print("Berechne Preise...")
-calculated_prices = pd.DataFrame(index=res_loads.index)
+# --- 5. Preise berechnen (Hourly -> dann Monthly Average) ---
+print("Berechne stündliche Preise...")
+hourly_prices = pd.DataFrame(index=res_loads.index)
 
 for zone in ZONE_NAMES:
     if zone not in res_loads.columns: continue
     stack = merit_orders.get(zone)
     if stack is None or stack.empty:
-        calculated_prices[zone] = np.nan
+        hourly_prices[zone] = np.nan
         continue
+    
     x_cap = stack['acum_mw'].values
     y_price = stack['mc'].values
+    
     loads = res_loads[zone].fillna(0).values
+    
+    # Indizes finden
     loads_clipped = np.clip(loads, 0, x_cap[-1])
     indices = np.searchsorted(x_cap, loads_clipped)
     indices = np.clip(indices, 0, len(y_price)-1)
+    
     prices = y_price[indices]
-    prices[loads > x_cap[-1]] = 500
+    
+    # Optional: Bei negativer Last Preis auf 0 setzen
     prices[loads <= 0] = 0
-    calculated_prices[zone] = prices
+    
+    hourly_prices[zone] = prices
 
-# --- 6. Visualisierung ---
-print("Starte Animation...")
-# Frames reduzieren
-step = 1 if len(calculated_prices) <= 2000 else (len(calculated_prices) // 500)
-if step < 1: step = 1
+print("Aggregiere auf Monatsdurchschnittswerte...")
+# Wir gruppieren nach Monat und Jahr und bilden den Mittelwert
+# 'MS' steht für Month Start (damit das Datum am 1. des Monats liegt)
+monthly_prices = hourly_prices.resample('MS').mean()
+
+# --- 6. Visualisierung (Monats-Animation) ---
+print("Starte Animation (Monats-Modus)...")
+
 gdf_list = []
+timestamps = []
 
-subset = calculated_prices.iloc[::step]
-for timestamp, row in subset.iterrows():
+# Dictionary für deutsche Monatsnamen
+german_months = {
+    1: "Januar", 2: "Februar", 3: "März", 4: "April", 5: "Mai", 6: "Juni",
+    7: "Juli", 8: "August", 9: "September", 10: "Oktober", 11: "November", 12: "Dezember"
+}
+
+for timestamp, row in monthly_prices.iterrows():
     temp = gdf.copy()
     vals = []
+    
+    # Preisdaten für diesen Monat in die Geometrie mappen
     for idx, geo_row in temp.iterrows():
         z_name = geo_row['zone']
         vals.append(row.get(z_name, np.nan))
+    
     temp['price'] = vals
     temp['timestamp'] = timestamp
+    
+    # Label für den Plot vorbereiten (z.B. "Januar 2024")
+    m_name = german_months.get(timestamp.month, str(timestamp.month))
+    temp['label_title'] = f"{m_name} {timestamp.year}"
+    
     gdf_list.append(temp)
+    timestamps.append(timestamp)
+
+# Hintergrund laden
+try:
+    world_map = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+    europe_box = box(3, 46, 17, 56)
+    bg_map = world_map.clip(europe_box)
+except:
+    bg_map = None
 
 fig, ax = plt.subplots(figsize=(10, 12)) 
+fig.patch.set_facecolor('#dce6f2')
+ax.set_facecolor('#dce6f2')
 plt.subplots_adjust(bottom=0.15, top=0.9, left=0.05, right=0.95)
 
-valid_p = calculated_prices.values.flatten()
-valid_p = valid_p[~np.isnan(valid_p)]
-vmax = np.percentile(valid_p, 98) if len(valid_p) > 0 else 150
-if vmax < 20: vmax = 100
+# Colorbar Range anpassen (Monatsmittel sind weniger extrem als Stundenwerte)
+# Wir nehmen min/max der Monatsdaten für eine gute Skalierung
+all_vals = monthly_prices.values.flatten()
+all_vals = all_vals[~np.isnan(all_vals)]
+if len(all_vals) > 0:
+    vmax = np.percentile(all_vals, 95) + 10 # Etwas Luft nach oben
+    vmin = max(0, np.min(all_vals) - 5)
+else:
+    vmax = 100
+    vmin = 0
 
-cmap = 'jet'
-sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=vmax))
+cmap = 'Blues'
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
 cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', pad=0.02, aspect=50)
-cbar.set_label('Marktpreis (berechnet) [€/MWh]')
+cbar.set_label('Durchschnittlicher Marktpreis (Base) [€/MWh]')
+cbar.outline.set_visible(False)
 
 def update_plot(val):
     frame = int(val)
@@ -248,52 +265,61 @@ def update_plot(val):
     ax.set_axis_off()
     
     data = gdf_list[frame]
-    ts = data['timestamp'].iloc[0]
+    title_str = data['label_title'].iloc[0] # Titel aus den Daten holen
     
-    # 1. Gefüllte Karte
-    data.plot(column='price', ax=ax, cmap=cmap, vmin=0, vmax=vmax,
-              edgecolor='white', linewidth=0.5, alpha=0.9)
+    if bg_map is not None:
+        bg_map.plot(ax=ax, facecolor='#e0e0e0', edgecolor='white', linewidth=0.5)
+
+    data.plot(column='price', ax=ax, cmap=cmap, vmin=vmin, vmax=vmax,
+              alpha=0.9, edgecolor=None)
     
-    # 2. Umrisse
-    try:
-        data.dissolve().plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
-        data.dissolve(by='zone').plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.5, alpha=0.5)
-    except: pass
+    # Grenzen
+    data.boundary.plot(ax=ax, edgecolor='#005b96', linewidth=2.5)
     
-    # Labels
-    for zone_name in ZONE_NAMES:
-        zone_rows = data[data['zone'] == zone_name]
-        if zone_rows.empty: continue
+    for _, geo_row in data.iterrows():
+        zone_name = geo_row['zone']
+        p = geo_row['price']
         
-        combined_geo = zone_rows.dissolve().geometry.iloc[0]
-        pt = combined_geo.representative_point()
+        pt = geo_row['geometry'].representative_point()
+        pt_x, pt_y = pt.x, pt.y
         
-        # Kleine Korrektur für TenneT
+        # Positionierung
         if zone_name == "TenneT":
-            pt_y = pt.y + 0.8 # Höher in den Norden schieben
-            pt_x = pt.x 
-        else:
-            pt_y, pt_x = pt.y, pt.x
-
-        p = zone_rows.iloc[0]['price']
+            pt_y -= 0.5 
+        elif zone_name == "50Hertz":
+            pt_x += 0.2
+            pt_y -= 0.3
         
-        if pd.isna(p):
-            val_txt, txt_col = "-", "black"
-        elif p >= 499:
-            val_txt, txt_col = "MAX", "white"
-        else:
-            val_txt = f"{p:.0f} €"
-            txt_col = 'white' if (p < vmax*0.3 or p > vmax*0.7) else 'black'
+        if pd.isna(p): val_txt = "-"
+        else: val_txt = f"Ø {p:.1f} €" # Durchschnittssymbol
 
-        ax.text(pt_x, pt_y + 0.20, zone_name, ha='center', va='center', fontsize=10, color='black', alpha=0.7, fontweight='bold')
-        ax.text(pt_x, pt_y - 0.20, val_txt, ha='center', va='center', fontsize=13, fontweight='bold', color=txt_col,
-                path_effects=[matplotlib.patheffects.withStroke(linewidth=1.7, foreground='black' if txt_col=='white' else 'white')])
+        ax.text(pt_x, pt_y + 0.15, zone_name, ha='center', va='bottom', 
+                fontsize=9, color='#004a7c', fontweight='bold', zorder=10)
         
-    ax.set_title(f"Strompreis-Monitor (Zonen)\n{ts.strftime('%d.%m.%Y %H:%M')}", fontsize=16)
+        ax.text(pt_x, pt_y - 0.15, val_txt, ha='center', va='top', 
+                fontsize=11, fontweight='bold', color='black', 
+                path_effects=[matplotlib.patheffects.withStroke(linewidth=2, foreground='white')],
+                zorder=10)
+        
+    ax.set_title(f"Monatlicher Durchschnittspreis\n{title_str}", fontsize=14, color='#333333', fontweight='bold')
 
+# Slider Setup
 ax_slider = plt.axes([0.15, 0.05, 0.7, 0.03])
-slider = Slider(ax_slider, 'Zeit', 0, len(gdf_list)-1, valinit=0, valstep=1)
+# Slider Steps = Anzahl Monate
+slider = Slider(ax_slider, 'Monat', 0, len(gdf_list)-1, valinit=0, valstep=1)
 slider.on_changed(lambda v: (update_plot(v), fig.canvas.draw_idle()))
 
 update_plot(0)
+
+# Tastensteuerung
+def on_key(event):
+    if event.key == 'right':
+        new_val = min(slider.val + 1, slider.valmax)
+        slider.set_val(new_val)
+    elif event.key == 'left':
+        new_val = max(slider.val - 1, slider.valmin)
+        slider.set_val(new_val)
+
+fig.canvas.mpl_connect('key_press_event', on_key)
+
 plt.show()
