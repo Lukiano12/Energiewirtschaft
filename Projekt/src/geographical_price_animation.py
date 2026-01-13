@@ -193,16 +193,22 @@ for zone in ZONE_NAMES:
     
     hourly_prices[zone] = prices
 
-print("Aggregiere auf Monatsdurchschnittswerte...")
-# Wir gruppieren nach Monat und Jahr und bilden den Mittelwert
-# 'MS' steht für Month Start (damit das Datum am 1. des Monats liegt)
-monthly_prices = hourly_prices.resample('MS').mean()
+# --- 5b. Aggregation auf typische 24h-Profile pro Monat ---
+print("Berechne typische Tagesverläufe (Ø pro Stunde je Monat)...")
 
-# --- 6. Visualisierung (Monats-Animation) ---
-print("Starte Animation (Monats-Modus)...")
+# Wir fügen temporäre Spalten hinzu, um danach zu gruppieren
+hourly_prices['year'] = hourly_prices.index.year
+hourly_prices['month'] = hourly_prices.index.month
+hourly_prices['hour'] = hourly_prices.index.hour
+
+# Gruppieren nach Jahr, Monat, Stunde -> Mittelwert
+# Das erzeugt für jedes Jahr 12 Monate * 24 Stunden = 288 Datenpunkte
+monthly_profiles = hourly_prices.groupby(['year', 'month', 'hour']).mean()
+
+# --- 6. Visualisierung (Profil-Animation) ---
+print("Starte Animation (Stunden-Profile pro Monat)...")
 
 gdf_list = []
-timestamps = []
 
 # Dictionary für deutsche Monatsnamen
 german_months = {
@@ -210,24 +216,24 @@ german_months = {
     7: "Juli", 8: "August", 9: "September", 10: "Oktober", 11: "November", 12: "Dezember"
 }
 
-for timestamp, row in monthly_prices.iterrows():
+# Durch das gruppierte Profil iterieren
+for (year, month, hour), row in monthly_profiles.iterrows():
     temp = gdf.copy()
     vals = []
     
-    # Preisdaten für diesen Monat in die Geometrie mappen
+    # Preisdaten für diese Stunde mappen
     for idx, geo_row in temp.iterrows():
         z_name = geo_row['zone']
         vals.append(row.get(z_name, np.nan))
     
     temp['price'] = vals
-    temp['timestamp'] = timestamp
     
-    # Label für den Plot vorbereiten (z.B. "Januar 2024")
-    m_name = german_months.get(timestamp.month, str(timestamp.month))
-    temp['label_title'] = f"{m_name} {timestamp.year}"
+    # Label erstellen: z.B. "Januar 2024 | 14:00 Uhr"
+    m_name = german_months.get(month, str(month))
+    title_text = f"{m_name} {year} – Durchschnitt {hour:02d}:00 Uhr"
+    temp['label_title'] = title_text
     
     gdf_list.append(temp)
-    timestamps.append(timestamp)
 
 # Hintergrund laden
 try:
@@ -242,21 +248,23 @@ fig.patch.set_facecolor('#dce6f2')
 ax.set_facecolor('#dce6f2')
 plt.subplots_adjust(bottom=0.15, top=0.9, left=0.05, right=0.95)
 
-# Colorbar Range anpassen (Monatsmittel sind weniger extrem als Stundenwerte)
-# Wir nehmen min/max der Monatsdaten für eine gute Skalierung
-all_vals = monthly_prices.values.flatten()
+# Colorbar Skalierung anpassen
+# Da wir Stundenwerte betrachten (Morgenspitze/Abendspitze), sind die Preise dynamischer als beim Monatsmittel
+zone_cols = [c for c in monthly_profiles.columns if c in ZONE_NAMES]
+all_vals = monthly_profiles[zone_cols].values.flatten()
 all_vals = all_vals[~np.isnan(all_vals)]
+
 if len(all_vals) > 0:
-    vmax = np.percentile(all_vals, 95) + 10 # Etwas Luft nach oben
-    vmin = max(0, np.min(all_vals) - 5)
+    vmax = np.percentile(all_vals, 98) # Spitzen besser abdecken
+    vmin = max(0, np.min(all_vals))
 else:
-    vmax = 100
+    vmax = 150
     vmin = 0
 
 cmap = 'Blues'
 sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
 cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', pad=0.02, aspect=50)
-cbar.set_label('Durchschnittlicher Marktpreis (Base) [€/MWh]')
+cbar.set_label('Ø Stundenpreis (Typical Day) [€/MWh]')
 cbar.outline.set_visible(False)
 
 def update_plot(val):
@@ -265,7 +273,7 @@ def update_plot(val):
     ax.set_axis_off()
     
     data = gdf_list[frame]
-    title_str = data['label_title'].iloc[0] # Titel aus den Daten holen
+    title_str = data['label_title'].iloc[0]
     
     if bg_map is not None:
         bg_map.plot(ax=ax, facecolor='#e0e0e0', edgecolor='white', linewidth=0.5)
@@ -273,7 +281,6 @@ def update_plot(val):
     data.plot(column='price', ax=ax, cmap=cmap, vmin=vmin, vmax=vmax,
               alpha=0.9, edgecolor=None)
     
-    # Grenzen
     data.boundary.plot(ax=ax, edgecolor='#005b96', linewidth=2.5)
     
     for _, geo_row in data.iterrows():
@@ -283,15 +290,11 @@ def update_plot(val):
         pt = geo_row['geometry'].representative_point()
         pt_x, pt_y = pt.x, pt.y
         
-        # Positionierung
-        if zone_name == "TenneT":
-            pt_y -= 0.5 
-        elif zone_name == "50Hertz":
-            pt_x += 0.2
-            pt_y -= 0.3
+        if zone_name == "TenneT": pt_y -= 0.5 
+        elif zone_name == "50Hertz": pt_x += 0.2; pt_y -= 0.3
         
         if pd.isna(p): val_txt = "-"
-        else: val_txt = f"Ø {p:.1f} €" # Durchschnittssymbol
+        else: val_txt = f"{p:.1f} €"
 
         ax.text(pt_x, pt_y + 0.15, zone_name, ha='center', va='bottom', 
                 fontsize=9, color='#004a7c', fontweight='bold', zorder=10)
@@ -301,25 +304,36 @@ def update_plot(val):
                 path_effects=[matplotlib.patheffects.withStroke(linewidth=2, foreground='white')],
                 zorder=10)
         
-    ax.set_title(f"Monatlicher Durchschnittspreis\n{title_str}", fontsize=14, color='#333333', fontweight='bold')
+    ax.set_title(f"Typisches Tagesprofil (Monat)\n{title_str}", fontsize=14, color='#333333', fontweight='bold')
 
 # Slider Setup
 ax_slider = plt.axes([0.15, 0.05, 0.7, 0.03])
-# Slider Steps = Anzahl Monate
-slider = Slider(ax_slider, 'Monat', 0, len(gdf_list)-1, valinit=0, valstep=1)
+slider = Slider(ax_slider, 'Zeit', 0, len(gdf_list)-1, valinit=0, valstep=1)
 slider.on_changed(lambda v: (update_plot(v), fig.canvas.draw_idle()))
 
-update_plot(0)
-
-# Tastensteuerung
+# Erweiterte Tastensteuerung
 def on_key(event):
+    curr = slider.val
     if event.key == 'right':
-        new_val = min(slider.val + 1, slider.valmax)
+        # Eine Stunde vor
+        new_val = min(curr + 1, slider.valmax)
         slider.set_val(new_val)
     elif event.key == 'left':
-        new_val = max(slider.val - 1, slider.valmin)
+        # Eine Stunde zurück
+        new_val = max(curr - 1, slider.valmin)
+        slider.set_val(new_val)
+    elif event.key == 'up':
+        # Einen Monat vor (ca. +24 Schritte)
+        new_val = min(curr + 24, slider.valmax)
+        slider.set_val(new_val)
+    elif event.key == 'down':
+        # Einen Monat zurück
+        new_val = max(curr - 24, slider.valmin)
         slider.set_val(new_val)
 
 fig.canvas.mpl_connect('key_press_event', on_key)
 
+print("GUI gestartet.")
+print("Steuerung: [Links/Rechts] = Stunde ±1 | [Hoch/Runter] = Monat ±1")
+update_plot(0)
 plt.show()
