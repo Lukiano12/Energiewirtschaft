@@ -9,3 +9,6 @@ geopandas
 contextily
 scipy
 shapely
+tqdm
+imageio
+imageio-ffmpeg

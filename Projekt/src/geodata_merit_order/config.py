@@ -27,7 +27,7 @@ SCENARIOS = {
         'description': '4 Zonen - Gekoppelt'
     },
     'z4_diff': {
-        'file_keyword': 'Z4_COUPLED',  # Wird nicht direkt verwendet
+        'file_keyword': 'Z4_COUPLED',
         'sheet': 'timeseries_coupled',
         'zones': ['50Hertz', 'TenneT', 'Amprion', 'TransnetBW'],
         'description': '4 Zonen - Preisdifferenz (Coupled - Insel)'
@@ -47,7 +47,7 @@ SCENARIOS = {
         'description': 'Nord-Süd - Gekoppelt'
     },
     'ns_diff': {
-        'file_keyword': 'NS_COUPLED',  # Wird nicht direkt verwendet
+        'file_keyword': 'NS_COUPLED',
         'sheet': 'timeseries_coupled',
         'zones': ['north', 'south'],
         'description': 'Nord-Süd - Preisdifferenz (Coupled - Insel)'
@@ -64,15 +64,45 @@ ZONE_BUNDESLAENDER = {
               'Brandenburg', 'Berlin', 'Sachsen-Anhalt'],
     'south': ['Bayern', 'Baden-Württemberg', 'Hessen', 'Thüringen', 'Sachsen', 
               'Rheinland-Pfalz', 'Saarland', 'Nordrhein-Westfalen'],
-    'de': ['alle']  # Alle Bundesländer
+    'de': ['alle']
 }
 
-# Visualisierungs-Einstellungen
+# ============================================================================
+# EINHEITLICHE FARBSKALA FÜR ALLE PREIS-SZENARIEN
+# ============================================================================
+# Diese Werte werden für ALLE Szenarien verwendet (außer Differenz-Szenarien)
+# So sind die Visualisierungen direkt vergleichbar!
+
+PRICE_SCALE = {
+    'vmin': 0,        # Minimaler Preis (€/MWh)
+    'vmax': 200,      # Maximaler Preis (€/MWh) - Anpassen falls nötig
+    'cmap': 'YlOrRd'  # Farbskala: Gelb (günstig) -> Orange -> Rot (teuer)
+}
+
+# Farbskala für Differenz-Szenarien (symmetrisch um 0)
+DIFF_SCALE = {
+    'vmax': 50,         # Maximale Differenz (±€/MWh)
+    'cmap': 'RdYlGn_r'  # Rot (teurer) -> Gelb (gleich) -> Grün (günstiger)
+}
+
+# ============================================================================
+# VISUALISIERUNGS-EINSTELLUNGEN
+# ============================================================================
 VIS_SETTINGS = {
-    'figsize': (10, 12),
+    'figsize': (14, 10),
     'dpi': 150,
-    'cmap_price': 'YlOrRd',
-    'cmap_diff': 'RdYlGn_r',
-    'background_color': '#dce6f2',
-    'border_color': '#005b96',
+    'background_color': '#1e1e1e',
+    'map_background': '#2d2d2d',
+    'border_color': '#ffffff',
+    'text_color': '#ffffff',
+    'accent_color': '#4a9eff',
+}
+
+# ============================================================================
+# VIDEO-EXPORT EINSTELLUNGEN
+# ============================================================================
+VIDEO_SETTINGS = {
+    'fps': 8,           # Frames pro Sekunde
+    'dpi': 150,         # Auflösung
+    'bitrate': 5000,    # Bitrate für Qualität
 }
