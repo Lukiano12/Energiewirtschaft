@@ -75,7 +75,7 @@ ZONE_BUNDESLAENDER = {
 
 PRICE_SCALE = {
     'vmin': 0,        # Minimaler Preis (€/MWh)
-    'vmax': 200,      # Maximaler Preis (€/MWh) - Anpassen falls nötig
+    'vmax': 500,      # Maximaler Preis (€/MWh) - Erhöht für Inselbetrachtung
     'cmap': 'YlOrRd'  # Farbskala: Gelb (günstig) -> Orange -> Rot (teuer)
 }
 
