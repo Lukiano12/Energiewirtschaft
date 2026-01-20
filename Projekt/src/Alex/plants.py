@@ -11,8 +11,18 @@ Wichtige Modellentscheidung:
   Sie werden nur als Check/Export ausgegeben.
 """
 
-import numpy as np
+from pathlib import Path
 import pandas as pd
+import numpy as np
+# ... deine bisherigen Imports bleiben
+
+def choose_plants_file_for_year(model_year: int, by_year: dict, default_path) -> Path:
+    """
+    Wählt die passende Kraftwerksliste für ein Modelljahr.
+    Nutzt das Dictionary 'by_year' aus config.py, ansonsten den Default-Pfad.
+    """
+    p = by_year.get(model_year, default_path)
+    return Path(p)
 
 
 def load_plants_excel(path, sheet_name=None) -> pd.DataFrame:

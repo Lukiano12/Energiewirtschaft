@@ -55,10 +55,25 @@ def run_market_coupling(
     time_index = zone_ts[zones[0]].index
     rows = []
 
+    time_index = zone_ts[zones[0]].index
+    rows = []
+
     for t in time_index:
         # Last und EE-Verfügbarkeit (MW)
         L = {z: float(zone_ts[z].loc[t, "load_mw"]) for z in zones}
         EE_av = {z: float(zone_ts[z].loc[t, "vre_mw"]) for z in zones}
+
+        # WICHTIG:
+        # Durch Reindexing & Zeitzonen-Themen (Sommer-/Winterzeit)
+        # können hier vereinzelt NaNs auftauchen.
+        # linprog darf aber KEINE NaNs/inf in b_eq sehen.
+        # -> Setze solche Werte einfach auf 0.0.
+        for z in zones:
+            if not np.isfinite(L[z]):
+                L[z] = 0.0
+            if not np.isfinite(EE_av[z]):
+                EE_av[z] = 0.0
+
 
         # Wir bauen LP-Variablen als Vektor x:
         # [ee_used_z, g_zk..., unserved_z] für alle z
