@@ -54,6 +54,7 @@ from plots import (
 )
 
 
+
 # -----------------------------------------------------------------------------
 # Helper: robust float conversion (für Shares aus config)
 # -----------------------------------------------------------------------------
@@ -341,17 +342,54 @@ def main():
         print("\n" + "=" * 90)
         print("RUN MARKET COUPLING (LP)")
         print("=" * 90)
-
+# die nächsten 45Zeile von Oli angepasst
         if C.SCENARIO == "Z4_COUPLED":
+            # -------------------------------------------------------------
+            # NTC-Auswahl nach Modelljahr (2045 = 2050)
+            # -------------------------------------------------------------
+            if C.MODEL_YEAR <= 2024:
+                ntc_year = 2024
+            elif C.MODEL_YEAR <= 2037:
+                ntc_year = 2037
+            else:
+                ntc_year = 2045
+
+            if ntc_year not in C.NTC_CAPACITIES_BY_YEAR:
+                raise KeyError(f"Keine NTC-Daten für Jahr {ntc_year} in config.")
+
+            ntc_base_mid = C.NTC_CAPACITIES_BY_YEAR[ntc_year]
+
+            print(f"[NTC] Verwende NTC-Kapazitäten für Jahr {ntc_year}")
+
             ntc_edges = build_ntc_edges_4zone(
-                C.NTC_BASE_MID,
+                ntc_base_mid,
                 C.NTC_SCALE,
                 C.DEFAULT_TRADE_COST,
                 C.EDGE_TRADE_COSTS,
             )
         else:
-            ntc_edges = build_ntc_edges_ns(C.NS_NTC_MW, C.NS_TRADE_COST)
+            # -------------------------------------------------------------
+            # NS: NTC-Auswahl nach Modelljahr
+            # -------------------------------------------------------------
+            if C.MODEL_YEAR <= 2024:
+                ntc_year = 2024
+            elif C.MODEL_YEAR <= 2037:
+                ntc_year = 2037
+            else:
+                ntc_year = 2045
 
+            if ntc_year not in C.NS_NTC_BY_YEAR:
+                raise KeyError(f"Kein NS-NTC-Wert für Jahr {ntc_year} in config.")
+
+            ns_ntc_mw = C.NS_NTC_BY_YEAR[ntc_year]
+
+            print(f"[NS-NTC] Verwende NS-NTC für Jahr {ntc_year}: {ns_ntc_mw} MW")
+
+            ntc_edges = build_ntc_edges_ns(
+                ns_ntc_mw,
+                C.NS_TRADE_COST,
+            )
+    
         coupled = run_market_coupling(
             zones=zones,
             zone_ts=zone_results,

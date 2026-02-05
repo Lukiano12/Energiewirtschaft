@@ -2,57 +2,97 @@
 Konfiguration für die Merit-Order Visualisierung.
 Definiert alle verfügbaren Szenarien und deren Parameter.
 """
+from pathlib import Path
 
-# Szenario-Konfigurationen
-SCENARIOS = {
-    # Deutschland als einzelne Zone
-    'de_single': {
-        'file_keyword': 'DE_SINGLE',
+# Basis-Verzeichnisse
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
+SMARD_DIR = DATA_DIR / "smard"
+RESOURCES_DIR = SCRIPT_DIR / "resources"
+
+# Verfügbare Jahre
+AVAILABLE_YEARS = [2024, 2037, 2045]
+
+# EPEX-Preisdatei (jetzt im resources-Ordner!)
+EPEX_PRICE_FILE = RESOURCES_DIR / "Day_Ahead_Auktion_202401010000_202501010000_Viertelstunde.xlsx"
+
+# Szenario-Konfigurationen - dynamisch für alle Jahre generiert
+def generate_scenarios():
+    """Generiert Szenario-Konfigurationen für alle Jahre."""
+    scenarios = {}
+    
+    for year in AVAILABLE_YEARS:
+        year_suffix = f"_{year}" if year != 2024 else "_2024"
+        
+        # Deutschland als einzelne Zone
+        scenarios[f'de_single_{year}'] = {
+            'file_keyword': f'{year}_DE_SINGLE',
+            'sheet': 'timeseries_insel',
+            'zones': ['de'],
+            'description': f'Deutschland {year} (eine Zone)',
+            'year': year
+        }
+        
+        # 4-Zonen-Modell (ÜNB-Gebiete)
+        scenarios[f'z4_insel_{year}'] = {
+            'file_keyword': f'{year}_Z4_INSEL',
+            'sheet': 'timeseries_insel',
+            'zones': ['50Hertz', 'TenneT', 'Amprion', 'TransnetBW'],
+            'description': f'4 Zonen {year} - Inselbetrachtung',
+            'year': year
+        }
+        scenarios[f'z4_coupled_{year}'] = {
+            'file_keyword': f'{year}_Z4_COUPLED',
+            'sheet': 'timeseries_coupled',
+            'zones': ['50Hertz', 'TenneT', 'Amprion', 'TransnetBW'],
+            'description': f'4 Zonen {year} - Gekoppelt',
+            'year': year
+        }
+        scenarios[f'z4_diff_{year}'] = {
+            'file_keyword': f'{year}_Z4_COUPLED',
+            'sheet': 'timeseries_coupled',
+            'zones': ['50Hertz', 'TenneT', 'Amprion', 'TransnetBW'],
+            'description': f'4 Zonen {year} - Preisdifferenz',
+            'year': year
+        }
+        
+        # Nord-Süd-Modell
+        scenarios[f'ns_insel_{year}'] = {
+            'file_keyword': f'{year}_NS_INSEL',
+            'sheet': 'timeseries_insel',
+            'zones': ['north', 'south'],
+            'description': f'Nord-Süd {year} - Inselbetrachtung',
+            'year': year
+        }
+        scenarios[f'ns_coupled_{year}'] = {
+            'file_keyword': f'{year}_NS_COUPLED',
+            'sheet': 'timeseries_coupled',
+            'zones': ['north', 'south'],
+            'description': f'Nord-Süd {year} - Gekoppelt',
+            'year': year
+        }
+        scenarios[f'ns_diff_{year}'] = {
+            'file_keyword': f'{year}_NS_COUPLED',
+            'sheet': 'timeseries_coupled',
+            'zones': ['north', 'south'],
+            'description': f'Nord-Süd {year} - Preisdifferenz',
+            'year': year
+        }
+    
+    # Spezielles Szenario: EPEX-Vergleich (nur 2024)
+    scenarios['epex_comparison_2024'] = {
+        'file_keyword': '2024_DE_SINGLE',
         'sheet': 'timeseries_insel',
         'zones': ['de'],
-        'description': 'Deutschland (eine Zone)'
-    },
+        'description': '📊 EPEX-Vergleich 2024 (Modell vs. Realität)',
+        'year': 2024,
+        'is_epex_comparison': True
+    }
     
-    # 4-Zonen-Modell (ÜNB-Gebiete)
-    'z4_insel': {
-        'file_keyword': 'Z4_INSEL',
-        'sheet': 'timeseries_insel',
-        'zones': ['50Hertz', 'TenneT', 'Amprion', 'TransnetBW'],
-        'description': '4 Zonen - Inselbetrachtung'
-    },
-    'z4_coupled': {
-        'file_keyword': 'Z4_COUPLED',
-        'sheet': 'timeseries_coupled',
-        'zones': ['50Hertz', 'TenneT', 'Amprion', 'TransnetBW'],
-        'description': '4 Zonen - Gekoppelt'
-    },
-    'z4_diff': {
-        'file_keyword': 'Z4_COUPLED',
-        'sheet': 'timeseries_coupled',
-        'zones': ['50Hertz', 'TenneT', 'Amprion', 'TransnetBW'],
-        'description': '4 Zonen - Preisdifferenz (Coupled - Insel)'
-    },
-    
-    # Nord-Süd-Modell
-    'ns_insel': {
-        'file_keyword': 'NS_INSEL',
-        'sheet': 'timeseries_insel',
-        'zones': ['north', 'south'],
-        'description': 'Nord-Süd - Inselbetrachtung'
-    },
-    'ns_coupled': {
-        'file_keyword': 'NS_COUPLED',
-        'sheet': 'timeseries_coupled',
-        'zones': ['north', 'south'],
-        'description': 'Nord-Süd - Gekoppelt'
-    },
-    'ns_diff': {
-        'file_keyword': 'NS_COUPLED',
-        'sheet': 'timeseries_coupled',
-        'zones': ['north', 'south'],
-        'description': 'Nord-Süd - Preisdifferenz (Coupled - Insel)'
-    },
-}
+    return scenarios
+
+SCENARIOS = generate_scenarios()
 
 # Mapping von Zonennamen zu Bundesländern (für Geodaten)
 ZONE_BUNDESLAENDER = {
@@ -70,19 +110,22 @@ ZONE_BUNDESLAENDER = {
 # ============================================================================
 # EINHEITLICHE FARBSKALA FÜR ALLE PREIS-SZENARIEN
 # ============================================================================
-# Diese Werte werden für ALLE Szenarien verwendet (außer Differenz-Szenarien)
-# So sind die Visualisierungen direkt vergleichbar!
-
 PRICE_SCALE = {
-    'vmin': 0,        # Minimaler Preis (€/MWh)
-    'vmax': 500,      # Maximaler Preis (€/MWh) - Erhöht für Inselbetrachtung
-    'cmap': 'YlOrRd'  # Farbskala: Gelb (günstig) -> Orange -> Rot (teuer)
+    'vmin': 0,
+    'vmax': 500,
+    'cmap': 'YlOrRd'
 }
 
 # Farbskala für Differenz-Szenarien (symmetrisch um 0)
 DIFF_SCALE = {
-    'vmax': 50,         # Maximale Differenz (±€/MWh)
-    'cmap': 'RdYlGn_r'  # Rot (teurer) -> Gelb (gleich) -> Grün (günstiger)
+    'vmax': 50,
+    'cmap': 'RdYlGn_r'
+}
+
+# Farbskala für EPEX-Vergleich
+EPEX_COMPARISON_SCALE = {
+    'vmax': 100,  # ±100 €/MWh Abweichung
+    'cmap': 'RdBu_r'  # Rot = Modell teurer, Blau = Modell günstiger
 }
 
 # ============================================================================
@@ -102,7 +145,7 @@ VIS_SETTINGS = {
 # VIDEO-EXPORT EINSTELLUNGEN
 # ============================================================================
 VIDEO_SETTINGS = {
-    'fps': 8,           # Frames pro Sekunde
-    'dpi': 150,         # Auflösung
-    'bitrate': 5000,    # Bitrate für Qualität
+    'fps': 8,
+    'dpi': 150,
+    'bitrate': 5000,
 }
