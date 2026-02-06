@@ -57,56 +57,80 @@ def calculate_hourly_prices(res_loads, merit_orders, zone_names, direct_prices=N
     return hourly_prices
 
 def create_animation_frames(gdf, hourly_prices):
-    """Erstellt die Daten fuer jeden Frame der Animation."""
-    print("Berechne typische Tagesverlaeufe (Durchschnitt pro Stunde je Monat)...")
+    """
+    Erstellt die Daten für jeden Frame der Animation.
+    NEU: Nur 3 signifikante Zeitpunkte pro Monat (07:00, 12:00, 19:00 Uhr).
+    """
+    print("Berechne Animation-Frames (Morgens, Mittags, Abends pro Monat)...")
     
-    gdf_zones = list(gdf['zone'].unique())
+    # Sicherstellen, dass Index ein DatetimeIndex ist
+    if not isinstance(hourly_prices.index, pd.DatetimeIndex):
+        hourly_prices.index = pd.to_datetime(hourly_prices.index)
     
-    hourly_prices = hourly_prices.copy()
-    hourly_prices['year'] = hourly_prices.index.year
-    hourly_prices['month'] = hourly_prices.index.month
-    hourly_prices['hour'] = hourly_prices.index.hour
-    
-    zone_cols = [c for c in hourly_prices.columns if c in gdf_zones]
-    
-    if not zone_cols:
-        print(f"  FEHLER: Keine uebereinstimmenden Zonen gefunden!")
-        return [], pd.DataFrame()
-    
-    print(f"  Zonen fuer Animation: {zone_cols}")
-    
-    monthly_profiles = hourly_prices.groupby(['year', 'month', 'hour'])[zone_cols].mean()
-    
-    print("Erstelle Animations-Frames...")
+    monthly_profiles = []
     gdf_list = []
-    german_months = {
-        1: "Januar", 2: "Februar", 3: "Maerz", 4: "April", 
-        5: "Mai", 6: "Juni", 7: "Juli", 8: "August",
-        9: "September", 10: "Oktober", 11: "November", 12: "Dezember"
-    }
+    
+    # Definierte Stunden für die Animation (Morgenspitze, Mittagstief, Abendspitze)
+    selected_hours = [7, 12, 19]
+    hour_labels = {7: "Morgens (07:00)", 12: "Mittags (12:00)", 19: "Abends (19:00)"}
 
-    for (year, month, hour), row in monthly_profiles.iterrows():
-        temp_gdf = gdf.copy()
-        
-        prices = []
-        for zone in temp_gdf['zone']:
-            if zone in row.index:
-                prices.append(row[zone])
-            else:
-                prices.append(np.nan)
-        
-        temp_gdf['price'] = prices
-        
-        m_name = german_months.get(month, str(month))
-        temp_gdf['label_title'] = f"{m_name} {year} - {hour:02d}:00 Uhr"
-        temp_gdf['month'] = month
-        temp_gdf['hour'] = hour
-        
-        gdf_list.append(temp_gdf)
+    # Liste der Monate und Namen
+    months = range(1, 13)
+    month_names = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 
+                   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
     
-    if gdf_list:
-        print(f"  {len(gdf_list)} Frames erstellt")
-    
+    for month in months:
+        # Filter für den aktuellen Monat
+        month_mask = hourly_prices.index.month == month
+        df_month = hourly_prices[month_mask]
+        
+        if df_month.empty:
+            continue
+            
+        # Durchschnittlicher Tagesgang für diesen Monat berechnen
+        daily_profile = df_month.groupby(df_month.index.hour).mean()
+        
+        # Wir nehmen nur die ausgewählten 3 Stunden für die Frames
+        for h in selected_hours:
+            if h in daily_profile.index:
+                # Preise für diese Stunde (über alle Zonen) holen
+                prices_at_hour = daily_profile.loc[h]
+                
+                # Kopie des GeoDataFrames für diesen Frame erstellen
+                gdf_frame = gdf.copy()
+                
+                # Mapping erstellen: Zone -> Preis
+                price_map = prices_at_hour.to_dict()
+                
+                # Preise den Zonen zuordnen
+                current_prices = []
+                for zone_name in gdf_frame['zone']:
+                    # Versuche exakten Match
+                    val = price_map.get(zone_name)
+                    
+                    # Fallback: Case-insensitive Suche
+                    if val is None:
+                        for p_zone, p_val in price_map.items():
+                            if p_zone.lower() == zone_name.lower():
+                                val = p_val
+                                break
+                    
+                    current_prices.append(val if val is not None else 0)
+                
+                gdf_frame['price'] = current_prices
+                
+                # Metadaten für die Anzeige hinzufügen (Titel etc.)
+                gdf_frame['title_month'] = month_names[month-1]
+                gdf_frame['title_hour'] = hour_labels[h]
+                gdf_frame['month_idx'] = month
+                gdf_frame['hour'] = h # Wichtig für Slider-Logik (falls vorhanden)
+                
+                gdf_list.append(gdf_frame)
+                
+        # Speichere Profil für statische Plots (falls benötigt)
+        monthly_profiles.append(daily_profile)
+
+    print(f"  -> {len(gdf_list)} Frames generiert (12 Monate x 3 Tageszeiten).")
     return gdf_list, monthly_profiles
 
 def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, script_dir):

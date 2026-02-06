@@ -5,7 +5,7 @@ from . import gui, config, data_loader, geodata, visualization
 def run_epex_comparison(script_dir, output_dir):
     """
     Führt den EPEX-Vergleich aus: Modell 2024 vs. echte EPEX-Preise.
-    Zeigt ein Liniendiagramm mit Statistiken.
+    Erstellt ein Profil des durchschnittlichen Tagesverlaufs (0-24 Uhr).
     """
     import pandas as pd
     import numpy as np
@@ -13,7 +13,7 @@ def run_epex_comparison(script_dir, output_dir):
     import matplotlib.dates as mdates
     
     print("\n" + "="*70)
-    print("EPEX-VERGLEICH: MODELL 2024 vs. EPEX SPOT")
+    print("EPEX-VERGLEICH: DURCHSCHNITTLICHER TAGESVERLAUF (0-24h)")
     print("="*70)
     
     data_dir = script_dir / "resources"
@@ -47,13 +47,7 @@ def run_epex_comparison(script_dir, output_dir):
     
     if epex is None:
         print("\nEPEX-Datei nicht gefunden!")
-        print(f"Erwartet: {config.EPEX_PRICE_FILE}")
-        print("\nBitte lade von SMARD herunter:")
-        print("  https://www.smard.de/home/downloadcenter")
-        print("  -> Großhandelspreise -> Day-Ahead Auktion")
-        print("  -> Deutschland/Luxemburg, 2024, Viertelstunde")
-        gui.show_error("EPEX-Datei fehlt", 
-                      f"Bitte EPEX-Preise herunterladen und hier speichern:\n\n{config.EPEX_PRICE_FILE}")
+        gui.show_error("EPEX-Datei fehlt", "Bitte EPEX-Preise laden (siehe Konsole).")
         return
     
     # 3) Gemeinsamer Index
@@ -65,120 +59,69 @@ def run_epex_comparison(script_dir, output_dir):
     model = model.loc[common_idx]
     epex = epex.loc[common_idx]
     
-    print(f"\nVergleich über {len(common_idx)} Stunden")
-    print(f"Zeitraum: {common_idx[0]} bis {common_idx[-1]}")
-    
-    # 4) Statistiken
+    # Statistiken
     diff = model - epex
     mae = np.abs(diff).mean()
-    rmse = np.sqrt((diff ** 2).mean())
-    corr = model.corr(epex)
     bias = diff.mean()
     
-    print(f"\n--- Statistiken ---")
-    print(f"  MAE (mittlerer Fehler):     {mae:.2f} €/MWh")
-    print(f"  RMSE:                       {rmse:.2f} €/MWh")
-    print(f"  Korrelation:                {corr:.3f}")
-    print(f"  Bias (Modell - EPEX):       {bias:+.2f} €/MWh")
+    # Jahresdurchschnitte berechnen
+    avg_model = model.mean()
+    avg_epex = epex.mean()
+
+    print(f"Vergleich über {len(common_idx)} Stunden.")
+    print(f"  Ø Modellpreis: {avg_model:.2f} €/MWh")
+    print(f"  Ø EPEX-Preis:  {avg_epex:.2f} €/MWh")
     
-    # 5) Plots erstellen
-    fig, axes = plt.subplots(3, 1, figsize=(14, 12))
-    fig.suptitle('Merit-Order Modell 2024 vs. EPEX Spot', fontsize=16, fontweight='bold')
+    # -------------------------------------------------------------------------
+    # BERECHNUNG: Durchschnittlicher Tagesgang (0-23 Uhr)
+    # -------------------------------------------------------------------------
+    # Gruppieren nach Stunde des Tages (0, 1, ..., 23) und Mittelwert bilden
+    model_daily_profile = model.groupby(model.index.hour).mean()
+    epex_daily_profile = epex.groupby(epex.index.hour).mean()
     
-    # Plot 1: Wochenmittel über Jahr
-    model_weekly = model.resample("W").mean()
-    epex_weekly = epex.resample("W").mean()
+    hours = model_daily_profile.index
     
-    ax = axes[0]
-    ax.plot(model_weekly.index, model_weekly.values, 
-            label="Modell (Merit-Order)", color="steelblue", linewidth=1.5)
-    ax.plot(epex_weekly.index, epex_weekly.values, 
-            label="EPEX Spot", color="darkorange", linewidth=1.5, alpha=0.8)
-    ax.fill_between(model_weekly.index, model_weekly.values, epex_weekly.values,
-                   alpha=0.2, color='gray', label='Differenz')
-    ax.set_ylabel("Preis [€/MWh]")
-    ax.set_title("Jahresverlauf (Wochenmittel)")
-    ax.legend(loc="upper right")
+    # -------------------------------------------------------------------------
+    # PLOTTING
+    # -------------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    # Titel mit Durchschnittswerten
+    fig.suptitle(f'Durchschnittlicher Tagesverlauf (2024)', fontsize=16, fontweight='bold')
+    
+    subtitle = (f'Ø Modell: {avg_model:.2f} €/MWh  |  Ø EPEX: {avg_epex:.2f} €/MWh\n'
+                f'Abweichung (Bias): {bias:+.2f} €/MWh')
+    ax.set_title(subtitle, fontsize=11)
+    
+    # Linien plots
+    ax.plot(hours, model_daily_profile.values, label=f"Modell (Ø {avg_model:.1f} €)", 
+            color="#1f77b4", linewidth=2.5, marker='o', markersize=5)
+    ax.plot(hours, epex_daily_profile.values, label=f"EPEX Spot (Ø {avg_epex:.1f} €)", 
+            color="#ff7f0e", linewidth=2.5, marker='o', markersize=5)
+    
+    # Differenzfläche füllen
+    ax.fill_between(hours, model_daily_profile.values, epex_daily_profile.values, 
+                    color='gray', alpha=0.15, label='Differenz')
+    
+    # Achsen-Beschriftung
+    ax.set_xlabel("Stunde des Tages", fontsize=12)
+    ax.set_ylabel("Durchschnittspreis [€/MWh]", fontsize=12)
+    ax.set_xticks(hours)  # Zeige jede Stunde auf der x-Achse
+    ax.set_xticklabels([f"{h:02d}:00" for h in hours], rotation=45)
+    ax.legend(loc="upper left", frameon=True, fontsize=11)
+    
+    # Skala anpassen (0 bis 150 €/MWh)
+    ax.set_ylim(0, 150)
+
+    # Gitter
     ax.grid(True, alpha=0.3)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator())
-    
-    # Plot 2: Beispielwoche
-    sample_start = "2024-01-15"
-    sample_end = "2024-01-22"
-    mask = (model.index >= sample_start) & (model.index < sample_end)
-    
-    ax = axes[1]
-    ax.plot(model.index[mask], model.values[mask], 
-            label="Modell", color="steelblue", linewidth=1)
-    ax.plot(epex.index[mask], epex.values[mask], 
-            label="EPEX", color="darkorange", linewidth=1, alpha=0.8)
-    ax.set_ylabel("Preis [€/MWh]")
-    ax.set_title(f"Beispielwoche: {sample_start} bis {sample_end}")
-    ax.legend(loc="upper right")
-    ax.grid(True, alpha=0.3)
-    
-    # Plot 3: Scatter + Statistiken
-    ax = axes[2]
-    
-    # Stichprobe für Scatter
-    sample_size = min(3000, len(model))
-    idx = np.random.choice(len(model), sample_size, replace=False)
-    
-    ax.scatter(epex.iloc[idx], model.iloc[idx], alpha=0.3, s=8, c="steelblue")
-    
-    # Diagonale
-    lims = [max(0, min(epex.min(), model.min()) - 10), 
-            min(300, max(epex.max(), model.max()) + 10)]
-    ax.plot(lims, lims, "r--", linewidth=1.5, label="Perfekte Übereinstimmung")
-    
-    # Statistik-Box
-    stats_text = (f"MAE = {mae:.1f} €/MWh\n"
-                  f"RMSE = {rmse:.1f} €/MWh\n"
-                  f"Korrelation = {corr:.2f}\n"
-                  f"Bias = {bias:+.1f} €/MWh")
-    ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=11,
-            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    
-    ax.set_xlabel("EPEX Spot [€/MWh]")
-    ax.set_ylabel("Modell [€/MWh]")
-    ax.set_title("Scatter-Plot: Modell vs. EPEX")
-    ax.legend(loc="lower right")
-    ax.grid(True, alpha=0.3)
-    ax.set_xlim(lims)
-    ax.set_ylim(lims)
     
     plt.tight_layout()
     
     # Speichern
-    output_path = output_dir / "Vergleich_Modell_vs_EPEX_2024.png"
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    print(f"\nPlot gespeichert: {output_path}")
-    
-    plt.show()
-    
-    # Zusätzlich: Dauerlinie
-    fig2, ax2 = plt.subplots(figsize=(12, 6))
-    
-    model_sorted = np.sort(model.values)[::-1]
-    epex_sorted = np.sort(epex.values)[::-1]
-    hours = np.arange(len(model_sorted))
-    
-    ax2.plot(hours, model_sorted, label="Modell", color="steelblue", linewidth=1.5)
-    ax2.plot(hours, epex_sorted, label="EPEX", color="darkorange", linewidth=1.5, alpha=0.8)
-    
-    ax2.set_xlabel("Stunden (sortiert)")
-    ax2.set_ylabel("Preis [€/MWh]")
-    ax2.set_title("Preisdauerlinie 2024: Modell vs. EPEX")
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    ax2.set_ylim(-20, 250)
-    
-    plt.tight_layout()
-    
-    duration_path = output_dir / "Preisdauerlinie_Modell_vs_EPEX_2024.png"
-    plt.savefig(duration_path, dpi=150, bbox_inches="tight")
-    print(f"Dauerlinie gespeichert: {duration_path}")
+    output_path = output_dir / "Vergleich_Tagesprofil_2024.png"
+    plt.savefig(output_path, dpi=200, bbox_inches="tight")
+    print(f"\nGrafik gespeichert unter: {output_path}")
     
     plt.show()
 
