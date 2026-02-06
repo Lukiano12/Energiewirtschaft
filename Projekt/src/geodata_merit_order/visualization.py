@@ -125,6 +125,9 @@ def create_animation_frames(gdf, hourly_prices):
                 gdf_frame['month_idx'] = month
                 gdf_frame['hour'] = h # Wichtig für Slider-Logik (falls vorhanden)
                 
+                # Fix: Zusammengesetzten Titel für die Anzeige erstellen
+                gdf_frame['label_title'] = f"{month_names[month-1]} | {hour_labels[h]}"
+                
                 gdf_list.append(gdf_frame)
                 
         # Speichere Profil für statische Plots (falls benötigt)
