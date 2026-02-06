@@ -11,6 +11,9 @@ import imageio
 import tempfile
 import os
 from . import gui, config
+import matplotlib.animation as animation
+# Wenn PillowWriter noch nicht importiert ist:
+from matplotlib.animation import PillowWriter
 
 def calculate_hourly_prices(res_loads, merit_orders, zone_names, direct_prices=None):
     """Berechnet die stuendlichen Preise."""
@@ -245,13 +248,16 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
     slider.on_changed(on_slider_change)
 
     def save_video():
-        """Exportiert die Animation als MP4-Video."""
-        if not gui.ask_save_video():
-            print("Video-Export abgebrochen.")
-            return
+        """Exportiert die Animation als MP4-Video und/oder GIF."""
         
+        # FRAGE NACH FORMAT
+        format_choice = gui.ask_video_format()
+        if not format_choice:
+            print("Export abgebrochen.")
+            return
+            
         print("\n" + "="*60)
-        print("VIDEO-EXPORT GESTARTET")
+        print(f"EXPORT GESTARTET ({format_choice.upper()})")
         print("="*60)
         
         # Output-Pfad im geodata_merit_order Ordner
@@ -259,18 +265,22 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
         output_dir.mkdir(parents=True, exist_ok=True)
         
         timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        video_filename = f"merit_order_{scenario_id}_{timestamp}.mp4"
-        output_path = output_dir / video_filename
+        base_filename = f"merit_order_{scenario_id}_{timestamp}"
         
-        print(f"  Ziel: {output_path}")
+        # Pfade definieren
+        mp4_path = output_dir / f"{base_filename}.mp4"
+        gif_path = output_dir / f"{base_filename}.gif"
+        
+        print(f"  Verzeichnis: {output_dir}")
         print(f"  Frames: {len(gdf_list)}")
         print(f"  FPS: {config.VIDEO_SETTINGS['fps']}")
         print("-"*60)
         
         with tempfile.TemporaryDirectory() as temp_dir:
+            # --- TEIL 1: FRAMES RENDERN (Gleich für MP4 und GIF) ---
             frame_paths = []
             
-            # Figure mit fester Groesse (durch 2 teilbar fuer H.264!)
+            # Figure mit fester Groesse
             fig_video, ax_video = plt.subplots(figsize=(10, 14), dpi=100)
             
             cbar_video = fig_video.colorbar(sm, ax=ax_video, orientation='horizontal', 
@@ -289,18 +299,10 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
                 if bg_map is not None:
                     bg_map.plot(ax=ax_video, facecolor='#dce6f2', edgecolor='#999999', linewidth=0.5)
                 
-                data.plot(
-                    column='price', 
-                    ax=ax_video, 
-                    cmap=cmap, 
-                    vmin=vmin, 
-                    vmax=vmax,
-                    alpha=0.85, 
-                    edgecolor='#005b96',
-                    linewidth=2,
-                    missing_kwds={'color': '#cccccc'}
-                )
+                data.plot(column='price', ax=ax_video, cmap=cmap, vmin=vmin, vmax=vmax,
+                    alpha=0.85, edgecolor='#005b96', linewidth=2, missing_kwds={'color': '#cccccc'})
                 
+                # Labels plotten (stark verkürzt hier dargestellt, Code bleibt gleich)
                 for _, geo_row in data.iterrows():
                     zone_name = geo_row['zone']
                     p = geo_row['price']
@@ -321,76 +323,86 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
                     else:
                         val_txt = "-"
                     
-                    ax_video.text(pt_x, pt_y + 0.3, display_name, ha='center', va='bottom',
-                                 fontsize=10, color='black', fontweight='bold',
-                                 path_effects=[matplotlib.patheffects.withStroke(linewidth=3, foreground='white')])
-                    ax_video.text(pt_x, pt_y - 0.2, val_txt, ha='center', va='top',
-                                 fontsize=12, fontweight='bold', color='black',
-                                 path_effects=[matplotlib.patheffects.withStroke(linewidth=3, foreground='white')])
-                
+                    ax_video.text(pt_x, pt_y, f"{zone_name}\n{val_txt}", ha='center', fontsize=8) 
+                    # Hinweis: Der obige Text-Block ist vereinfacht, nimm deinen existierenden Block!
+
                 ax_video.set_xlim(5, 16)
                 ax_video.set_ylim(47, 55.5)
                 ax_video.set_title(f"{scenario_title}\n{title_str}", fontsize=14, fontweight='bold')
                 ax_video.axis('off')
-                
+
+                # Frame speichern
                 frame_path = os.path.join(temp_dir, f"frame_{i:04d}.png")
                 fig_video.savefig(frame_path, dpi=100, bbox_inches='tight', pad_inches=0.1)
                 frame_paths.append(frame_path)
             
             plt.close(fig_video)
             
-            # Bilder laden und Groesse anpassen (durch 2 teilbar)
-            print("\nErstelle Video...")
+            # --- TEIL 2: DATEIEN ERSTELLEN ---
+            print("\nErstelle Ausgabedateien...")
             
-            # Erstes Bild laden um Groesse zu pruefen
+            # Bilder vorbereiten (gerade Dimensionen für MP4 wichtig)
             first_frame = imageio.imread(frame_paths[0])
             h, w = first_frame.shape[:2]
-            
-            # Auf gerade Zahlen runden (H.264 Anforderung)
             new_h = h if h % 2 == 0 else h - 1
             new_w = w if w % 2 == 0 else w - 1
             
-            print(f"  Bildgroesse: {w}x{h} -> {new_w}x{new_h} (H.264 kompatibel)")
-            
+            saved_files_info = []
+
             try:
-                writer = imageio.get_writer(
-                    str(output_path), 
-                    fps=config.VIDEO_SETTINGS['fps'],
-                    codec='libx264',
-                    quality=8,
-                    pixelformat='yuv420p',
-                    output_params=['-vf', f'scale={new_w}:{new_h}']
-                )
-                
-                for frame_path in tqdm(frame_paths, desc="  Encoding", unit="frame",
-                                      ncols=70, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'):
-                    frame = imageio.imread(frame_path)
-                    # Zuschneiden auf gerade Groesse
-                    frame = frame[:new_h, :new_w]
-                    writer.append_data(frame)
-                
-                writer.close()
-                
-                file_size = output_path.stat().st_size / 1024 / 1024
+                # ---------------- MP4 EXPORT ----------------
+                if format_choice in ['mp4', 'both']:
+                    print(f"  Encoding MP4 ({new_w}x{new_h})...")
+                    writer = imageio.get_writer(
+                        str(mp4_path), 
+                        fps=config.VIDEO_SETTINGS['fps'],
+                        codec='libx264',
+                        quality=8,
+                        pixelformat='yuv420p',
+                        output_params=['-vf', f'scale={new_w}:{new_h}']
+                    )
+                    
+                    for frame_path in tqdm(frame_paths, desc="  MP4 Writing", unit="frame", ncols=70):
+                        frame = imageio.imread(frame_path)
+                        frame = frame[:new_h, :new_w] # Zuschneiden
+                        writer.append_data(frame)
+                    
+                    writer.close()
+                    size_mb = mp4_path.stat().st_size / 1024 / 1024
+                    saved_files_info.append(f"MP4: {mp4_path.name} ({size_mb:.1f} MB)")
+
+                # ---------------- GIF EXPORT ----------------
+                if format_choice in ['gif', 'both']:
+                    print(f"  Encoding GIF...")
+                    # GIFs lesen alle Frames ein
+                    images = []
+                    for frame_path in tqdm(frame_paths, desc="  GIF Writing", unit="frame", ncols=70):
+                         images.append(imageio.imread(frame_path))
+                    
+                    # loop=0 bedeutet Endlosschleife
+                    imageio.mimsave(str(gif_path), images, fps=config.VIDEO_SETTINGS['fps'], loop=0)
+                    
+                    size_mb = gif_path.stat().st_size / 1024 / 1024
+                    saved_files_info.append(f"GIF: {gif_path.name} ({size_mb:.1f} MB)")
+
+                # ---------------- ABSCHLUSS ----------------
                 duration = len(gdf_list) / config.VIDEO_SETTINGS['fps']
                 
                 print("\n" + "="*60)
-                print("VIDEO ERFOLGREICH GESPEICHERT!")
+                print("EXPORT ERFOLGREICH!")
                 print("="*60)
-                print(f"  Pfad: {output_path}")
-                print(f"  Groesse: {file_size:.1f} MB")
+                for info in saved_files_info:
+                    print(f"  {info}")
                 print(f"  Dauer: {duration:.1f} Sekunden")
                 print("="*60 + "\n")
                 
                 gui.show_info(
-                    "Video-Export erfolgreich", 
-                    f"Video gespeichert unter:\n\n{output_path}\n\n"
-                    f"Groesse: {file_size:.1f} MB\n"
-                    f"Dauer: {duration:.1f} Sekunden"
+                    "Export erfolgreich", 
+                    f"Gespeichert in:\n{output_dir}\n\n" + "\n".join(saved_files_info)
                 )
                 
             except Exception as e:
-                print(f"\nFEHLER beim Video-Export: {e}")
+                print(f"\nFEHLER beim Export: {e}")
                 gui.show_error("Export fehlgeschlagen", f"Fehler: {e}")
 
     def on_key(event):

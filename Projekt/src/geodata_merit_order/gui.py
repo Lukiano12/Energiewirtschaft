@@ -259,20 +259,60 @@ def scenario_selection(scenario_ids):
     return selected[0]
 
 
-def ask_save_video():
-    """Fragt den Benutzer, ob das Video gespeichert werden soll."""
-    root = tk.Tk()
-    root.withdraw()
-    result = messagebox.askyesno(
-        "Video speichern",
-        "Möchten Sie die Animation als Video speichern?\n\n"
-        "Dies kann einige Minuten dauern.\n"
-        "Benötigt: ffmpeg",
-        icon='question'
-    )
-    root.destroy()
-    return result
-
+def ask_video_format():
+    """
+    Fragt den Benutzer nach dem gewünschten Videoformat.
+    Gibt zurück: 'mp4', 'gif', 'both' oder None (bei Abbruch).
+    """
+    result = [None]
+    
+    # Dialog-Fenster erstellen
+    dialog = tk.Toplevel()
+    dialog.title("Export Format")
+    dialog.geometry("400x250")
+    dialog.configure(bg="#2b2b2b")
+    dialog.resizable(False, False)
+    
+    # Zentrieren
+    dialog.update_idletasks()
+    x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
+    y = (dialog.winfo_screenheight() // 2) - (250 // 2)
+    dialog.geometry(f"+{x}+{y}")
+    
+    # Modal machen (Hauptfenster blockieren)
+    dialog.transient()
+    dialog.grab_set()
+    
+    tk.Label(
+        dialog, 
+        text="In welchem Format speichern?", 
+        font=("Segoe UI", 12, "bold"),
+        bg="#2b2b2b", fg="#ffffff"
+    ).pack(pady=20)
+    
+    def set_res(val):
+        result[0] = val
+        dialog.destroy()
+    
+    btn_style = {
+        "font": ("Segoe UI", 10),
+        "bg": "#3d3d3d", "fg": "#ffffff",
+        "activebackground": "#4d4d4d", "activeforeground": "#ffffff",
+        "relief": "flat", "width": 30, "cursor": "hand2"
+    }
+    
+    tk.Button(dialog, text="🎥  Nur MP4 (Video)", command=lambda: set_res('mp4'), **btn_style).pack(pady=5)
+    tk.Button(dialog, text="🎞️  Nur GIF (Animation)", command=lambda: set_res('gif'), **btn_style).pack(pady=5)
+    tk.Button(dialog, text="✨  Beide speichern", command=lambda: set_res('both'), **btn_style).pack(pady=5)
+    
+    tk.Button(
+        dialog, text="Abbrechen", 
+        command=lambda: set_res(None),
+        font=("Segoe UI", 9), bg="#8b0000", fg="#ffffff", relief="flat", width=15
+    ).pack(pady=20)
+    
+    dialog.wait_window()
+    return result[0]
 
 def show_error(title, message):
     """Zeigt eine Fehlermeldung an."""
