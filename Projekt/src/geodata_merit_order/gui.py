@@ -160,6 +160,43 @@ def scenario_selection(scenario_ids):
     separator.pack(fill='x', pady=15)
     
     # =========================================================================
+    # NEU: Multi-Year Vergleich (Alle Jahre nebeneinander)
+    # =========================================================================
+    multi_frame = tk.Frame(scrollable_frame, bg=bg_color)
+    multi_frame.pack(fill='x', pady=(5, 5))
+    
+    multi_label = tk.Label(
+        multi_frame,
+        text="📅 Zeitreise (2024 vs 2037 vs 2045)",
+        font=("Segoe UI", 12, "bold"),
+        bg=bg_color,
+        fg="#00bcd4", # Cyan
+        anchor='w'
+    )
+    multi_label.pack(fill='x', pady=(5, 8))
+
+    # Definition der Multi-Basis-Typen
+    multi_types = [
+        ('multi_de_single', 'Deutschland (Gesamt)'),
+        ('multi_z4_insel', '4 Zonen (Inselbetrachtung)'),
+        ('multi_z4_coupled', '4 Zonen (Gekoppelt)'),
+        ('multi_z4_diff', '4 Zonen (Preisdifferenz)'),
+        ('multi_ns_insel', 'Nord-Süd (Inselbetrachtung)'),
+        ('multi_ns_coupled', 'Nord-Süd (Gekoppelt)'),
+        ('multi_ns_diff', 'Nord-Süd (Preisdifferenz)'),
+    ]
+
+    for m_id, m_text in multi_types:
+        btn = create_button(multi_frame, m_id, m_text)
+        # Etwas andere Farbe zur Unterscheidung
+        btn.configure(bg="#006064") 
+        btn.pack(pady=2)
+
+    # Trennlinie
+    separator_multi = tk.Frame(scrollable_frame, height=2, bg="#444444")
+    separator_multi.pack(fill='x', pady=15)
+    
+    # =========================================================================
     # Szenarien nach Jahr gruppiert
     # =========================================================================
     for year in config.AVAILABLE_YEARS:

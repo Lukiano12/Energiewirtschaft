@@ -1,19 +1,19 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patheffects
-from matplotlib.widgets import Slider
-from shapely.geometry import box
+import matplotlib.patheffects as pe
 import geopandas as gpd
 from pathlib import Path
 from tqdm import tqdm
-import imageio
-import tempfile
-import os
 from . import gui, config
-import matplotlib.animation as animation
-# Wenn PillowWriter noch nicht importiert ist:
-from matplotlib.animation import PillowWriter
+import shutil
+from matplotlib.widgets import Slider
+from shapely.geometry import box
+
+# Matplotlib Animation Importe explizit
+from matplotlib.animation import PillowWriter, FFMpegWriter, FuncAnimation
+import os
+import imageio
 
 def calculate_hourly_prices(res_loads, merit_orders, zone_names, direct_prices=None):
     """Berechnet die stuendlichen Preise."""
@@ -59,81 +59,49 @@ def calculate_hourly_prices(res_loads, merit_orders, zone_names, direct_prices=N
 def create_animation_frames(gdf, hourly_prices):
     """
     Erstellt die Daten für jeden Frame der Animation.
-    NEU: Nur 3 signifikante Zeitpunkte pro Monat (07:00, 12:00, 19:00 Uhr).
+    NEU: 24 Stunden pro Monat (Durchschnittstag) = 288 Frames.
     """
-    print("Berechne Animation-Frames (Morgens, Mittags, Abends pro Monat)...")
+    print("Berechne Animation-Frames (24h-Durchschnitt pro Monat)...")
     
-    # Sicherstellen, dass Index ein DatetimeIndex ist
     if not isinstance(hourly_prices.index, pd.DatetimeIndex):
         hourly_prices.index = pd.to_datetime(hourly_prices.index)
     
     monthly_profiles = []
     gdf_list = []
     
-    # Definierte Stunden für die Animation (Morgenspitze, Mittagstief, Abendspitze)
-    selected_hours = [7, 12, 19]
-    hour_labels = {7: "Morgens (07:00)", 12: "Mittags (12:00)", 19: "Abends (19:00)"}
-
-    # Liste der Monate und Namen
     months = range(1, 13)
     month_names = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 
                    'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
     
     for month in months:
-        # Filter für den aktuellen Monat
-        month_mask = hourly_prices.index.month == month
-        df_month = hourly_prices[month_mask]
+        # Daten für diesen Monat filtern
+        month_data = hourly_prices[hourly_prices.index.month == month]
+        if month_data.empty: continue
         
-        if df_month.empty:
-            continue
-            
-        # Durchschnittlicher Tagesgang für diesen Monat berechnen
-        daily_profile = df_month.groupby(df_month.index.hour).mean()
+        # Durchschnittlichen Tagesverlauf berechnen (0..23 Uhr)
+        # Erzeugt DataFrame mit Index 0..23 und Spalten (Zonen)
+        daily_profile_mean = month_data.groupby(month_data.index.hour).mean()
         
-        # Wir nehmen nur die ausgewählten 3 Stunden für die Frames
-        for h in selected_hours:
-            if h in daily_profile.index:
-                # Preise für diese Stunde (über alle Zonen) holen
-                prices_at_hour = daily_profile.loc[h]
-                
-                # Kopie des GeoDataFrames für diesen Frame erstellen
-                gdf_frame = gdf.copy()
-                
-                # Mapping erstellen: Zone -> Preis
-                price_map = prices_at_hour.to_dict()
-                
-                # Preise den Zonen zuordnen
-                current_prices = []
-                for zone_name in gdf_frame['zone']:
-                    # Versuche exakten Match
-                    val = price_map.get(zone_name)
-                    
-                    # Fallback: Case-insensitive Suche
-                    if val is None:
-                        for p_zone, p_val in price_map.items():
-                            if p_zone.lower() == zone_name.lower():
-                                val = p_val
-                                break
-                    
-                    current_prices.append(val if val is not None else 0)
-                
-                gdf_frame['price'] = current_prices
-                
-                # Metadaten für die Anzeige hinzufügen (Titel etc.)
-                gdf_frame['title_month'] = month_names[month-1]
-                gdf_frame['title_hour'] = hour_labels[h]
-                gdf_frame['month_idx'] = month
-                gdf_frame['hour'] = h # Wichtig für Slider-Logik (falls vorhanden)
-                
-                # Fix: Zusammengesetzten Titel für die Anzeige erstellen
-                gdf_frame['label_title'] = f"{month_names[month-1]} | {hour_labels[h]}"
-                
-                gdf_list.append(gdf_frame)
-                
-        # Speichere Profil für statische Plots (falls benötigt)
-        monthly_profiles.append(daily_profile)
+        monthly_profiles.append((month_names[month-1], daily_profile_mean))
 
-    print(f"  -> {len(gdf_list)} Frames generiert (12 Monate x 3 Tageszeiten).")
+        # Frames für jede Stunde (0 bis 23) erstellen
+        for h in range(24):
+            # Falls Stunde im Datenbestand fehlt (unwahrscheinlich), überspringen
+            if h not in daily_profile_mean.index: continue
+            
+            price_row = daily_profile_mean.loc[h]
+            
+            # Merge mit Geodaten
+            gdf_frame = gdf.copy()
+            gdf_frame['price'] = gdf_frame['zone'].map(price_row)
+            
+            # Formatierung: "Januar | 14:00 Uhr"
+            label_text = f"{month_names[month-1]} | {h:02d}:00 Uhr"
+            gdf_frame['label_title'] = label_text
+            
+            gdf_list.append(gdf_frame)
+
+    print(f"  -> {len(gdf_list)} Frames generiert (12 Monate x 24 Stunden).")
     return gdf_list, monthly_profiles
 
 def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, script_dir):
@@ -467,4 +435,160 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
     print("  V        VIDEO EXPORTIEREN (MP4)")
     print("="*50 + "\n")
     
+    plt.show()
+
+def run_multi_year_visualization(data_packages, scenario_base_id, script_dir):
+    """
+    Visualisiert mehrere Jahre (2024, 2037, 2045) nebeneinander.
+    data_packages: Dictionary {year: gdf_list}
+    """
+    years = sorted(data_packages.keys())
+    if not years:
+        print("Keine Daten für Multi-View vorhanden.")
+        return
+
+    is_diff_scenario = 'diff' in scenario_base_id
+
+    # Hintergrundkarte laden
+    try:
+        world_map = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+        bg_map = world_map.clip(box(3, 46, 17, 56))
+    except:
+        bg_map = None
+
+    # --- SKALIERUNG ---
+    if is_diff_scenario:
+        vmax = config.DIFF_SCALE['vmax']
+        vmin = -vmax
+        cmap = config.DIFF_SCALE['cmap']
+        cbar_label = 'Preisdifferenz (Coupled - Insel) [EUR/MWh]'
+    else:
+        vmin = config.PRICE_SCALE['vmin']
+        vmax = config.PRICE_SCALE['vmax']
+        cmap = config.PRICE_SCALE['cmap']
+        cbar_label = 'Strompreis [EUR/MWh]'
+        
+    print(f"  Multi-View Skalierung: {vmin} bis {vmax} (einheitlich)")
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+
+    # Figure Setup: WICHTIG - constrained_layout=False verhindert den Konflikt mit subplots_adjust
+    fig, axes = plt.subplots(1, len(years), figsize=(18, 10), constrained_layout=False)
+    
+    if len(years) == 1: axes = [axes]
+    
+    fig.canvas.manager.set_window_title(f'Merit-Order Vergleich: {scenario_base_id}')
+    
+    # Manuelles Layout: Platz unten reservieren
+    plt.subplots_adjust(left=0.05, right=0.95, top=0.90, bottom=0.2, wspace=0.15)
+    
+    num_frames = len(data_packages[years[0]])
+
+    def plot_single_year(ax, year, frame_idx):
+        ax.clear()
+        gdf_list = data_packages[year]
+        if frame_idx >= len(gdf_list): return ""
+
+        data = gdf_list[frame_idx]
+        title_common = data['label_title'].iloc[0] 
+        
+        if bg_map is not None:
+            bg_map.plot(ax=ax, facecolor='#dce6f2', edgecolor='#999999', linewidth=0.5)
+        
+        data.plot(
+            column='price', ax=ax, cmap=cmap, vmin=vmin, vmax=vmax,
+            alpha=0.9, edgecolor='#005b96', linewidth=1.5,
+            missing_kwds={'color': '#cccccc'}
+        )
+        
+        # Labels
+        for _, geo_row in data.iterrows():
+            zone_name = geo_row['zone']
+            p = geo_row['price']
+            pt = geo_row['geometry'].representative_point()
+            offsets = {
+                "TenneT": (0, -0.6), "50Hertz": (0.3, -0.4), "de": (0, 0), 
+                "north": (0, 0.6), "south": (0, -0.4), "Amprion": (-0.2, 0), "TransnetBW": (0.1, -0.1)
+            }
+            dx, dy = offsets.get(zone_name, (0, 0))
+            
+            val_txt = f"{p:+.0f}" if is_diff_scenario else f"{p:.0f}"
+            if pd.isna(p): val_txt = "-"
+            
+            ax.text(
+                pt.x + dx, pt.y + dy, f"{val_txt} €", ha='center', va='center',
+                fontsize=11, fontweight='bold', color='black',
+                path_effects=[pe.withStroke(linewidth=2, foreground='white')], zorder=10
+            )
+
+        ax.set_xlim(5, 16)
+        ax.set_ylim(47, 55.5)
+        ax.set_title(f"Jahr {year}", fontsize=16, fontweight='bold', color='#333333')
+        ax.axis('off')
+        return title_common
+
+    def update_all(val):
+        frame_idx = int(val)
+        main_title = ""
+        for i, year in enumerate(years):
+            t = plot_single_year(axes[i], year, frame_idx)
+            if i == 0: main_title = t
+        fig.suptitle(f"Vergleich: {scenario_base_id.upper()}\n{main_title}", fontsize=15, fontweight='bold')
+
+    update_all(0)
+
+    # Colorbar
+    cbar = fig.colorbar(sm, ax=axes, orientation='horizontal', fraction=0.05, pad=0.05, shrink=0.6)
+    cbar.set_label(cbar_label, fontsize=12)
+
+    # Slider
+    ax_slider = plt.axes([0.2, 0.05, 0.6, 0.03])
+    slider = Slider(ax_slider, 'Zeit', 0, num_frames - 1, valinit=0, valstep=1)
+    slider.on_changed(lambda val: (update_all(val), fig.canvas.draw_idle()))
+    
+    # --- VIDEO EXPORT ---
+    def save_video_multi():
+        target_format = gui.ask_video_format()  # mp4, gif, both, None
+        if not target_format: return
+
+        print("Start Video-Export... (Bitte warten)")
+        base_filename = script_dir.parent.parent / "output" / "figures" / f"Multi_{scenario_base_id.replace('multi_', '')}"
+        
+        anim = FuncAnimation(fig, update_all, frames=num_frames, interval=500, blit=False)
+        
+        # FFmpeg Check
+        ffmpeg_available = shutil.which("ffmpeg") is not None
+        
+        if target_format in ['mp4', 'both']:
+            if ffmpeg_available:
+                try:
+                    mp4_path = f"{base_filename}.mp4"
+                    print(f"  Speichere MP4: {mp4_path}")
+                    writer = FFMpegWriter(fps=2, bitrate=3000)
+                    anim.save(mp4_path, writer=writer)
+                    print("  -> MP4 OK.")
+                except Exception as e:
+                    print(f"  FEHLER beim MP4-Export: {e}")
+            else:
+                print("  WARNUNG: FFmpeg nicht gefunden. MP4 übersprungen.")
+                gui.show_error("Fehler", "FFmpeg fehlt. MP4 kann nicht erstellt werden.")
+
+        if target_format in ['gif', 'both'] or (target_format == 'mp4' and not ffmpeg_available):
+            try:
+                gif_path = f"{base_filename}.gif"
+                print(f"  Speichere GIF: {gif_path}")
+                writer_gif = PillowWriter(fps=2)
+                anim.save(gif_path, writer=writer_gif)
+                print("  -> GIF OK.")
+            except Exception as e:
+                print(f"  FEHLER beim GIF-Export: {e}")
+
+        gui.show_info("Export fertig", "Dateien im output-Ordner gespeichert.")
+
+    def on_key(event):
+        if event.key == 'right': slider.set_val(min(slider.val + 1, slider.valmax))
+        elif event.key == 'left': slider.set_val(max(slider.val - 1, slider.valmin))
+        elif event.key.lower() == 'v': save_video_multi()
+
+    fig.canvas.mpl_connect('key_press_event', on_key)
     plt.show()

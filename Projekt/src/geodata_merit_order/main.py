@@ -226,6 +226,98 @@ def run_single_scenario(scenario_id, cfg, script_dir, output_dir):
     visualization.run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, script_dir)
 
 
+def run_multi_year_scenario(multi_id, script_dir, output_dir):
+    """
+    Lädt Daten für alle Jahre (2024, 2037, 2045) für einen Basis-Typ
+    und visualisiert sie gemeinsam.
+    multi_id format: 'multi_base_scenario' (z.B. 'multi_z4_insel')
+    """
+    base_type_raw = multi_id.replace("multi_", "") # z.B. z4_insel
+    
+    print(f"\n" + "="*60)
+    print(f"MULTI-YEAR VERGLEICH: {base_type_raw.upper()}")
+    print("="*60)
+    
+    data_packages = {}
+    
+    # Wir iterieren durch die fest definierten Jahre
+    for year in config.AVAILABLE_YEARS:
+        # Rekonstruiere die echte Scenario-ID
+        scenario_id = f"{base_type_raw}_{year}"
+        
+        # Prüfen ob Szenario existiert
+        if scenario_id not in config.SCENARIOS:
+            print(f"WARNUNG: Szenario {scenario_id} nicht in Config gefunden. Überspringe.")
+            continue
+            
+        cfg = config.SCENARIOS[scenario_id]
+        print(f"\n--- Lade Jahr {year} ---")
+        
+        # === IDENTISCHE LOGIK WIE Single Scenario (Kopiert & Angepasst) ===
+        zone_names = cfg['zones']
+        data_dir = script_dir / "resources"
+        
+        # Geodaten (abhängig vom Jahr, weil Zonen gleich bleiben, aber um sicher zu sein)
+        gdf = geodata.create_germany_zones(base_type_raw, zone_names)
+        
+        # Unterscheidung Diff vs Normal
+        if '_diff_' in scenario_id:
+            # Differenz berechnen
+            sub_base = base_type_raw.replace("_diff", "") # z4 oder ns
+            
+            # 1. Insel
+            id_insel = f'{sub_base}_insel_{year}'
+            cfg_insel = config.SCENARIOS.get(id_insel)
+            exc_insel = data_loader.find_scenario_excel(data_dir, cfg_insel['file_keyword'])
+            mo_insel = data_loader.load_merit_orders(exc_insel, zone_names)
+            load_insel, _ = data_loader.load_timeseries(exc_insel, cfg_insel['sheet'], zone_names)
+            p_insel = visualization.calculate_hourly_prices(load_insel, mo_insel, zone_names, None)
+            
+            # 2. Coupled
+            id_coup = f'{sub_base}_coupled_{year}'
+            cfg_coup = config.SCENARIOS.get(id_coup)
+            exc_coup = data_loader.find_scenario_excel(data_dir, cfg_coup['file_keyword'])
+            load_coup, dp_coup = data_loader.load_timeseries(exc_coup, cfg_coup['sheet'], zone_names)
+            
+            # Check direct prices
+            dp_arg = dp_coup if not dp_coup.empty else None
+            p_coup = visualization.calculate_hourly_prices(load_coup, mo_insel, zone_names, dp_arg)
+            
+            hourly_prices = p_coup - p_insel
+            
+        else:
+            # Normales Szenario
+            excel_path = data_loader.find_scenario_excel(data_dir, cfg['file_keyword'])
+            if not excel_path: continue
+            
+            merit_orders = data_loader.load_merit_orders(excel_path, zone_names)
+            res_loads, direct_prices = data_loader.load_timeseries(excel_path, cfg['sheet'], zone_names)
+            
+            is_coupled = 'coupled' in scenario_id
+            dp_arg = direct_prices if (is_coupled and not direct_prices.empty) else None
+            
+            hourly_prices = visualization.calculate_hourly_prices(
+                res_loads, merit_orders, zone_names, direct_prices=dp_arg
+            )
+
+        if hourly_prices.empty:
+            print(f"FEHLER: Keine Preise für {year} berechnet.")
+            continue
+            
+        # Frames erstellen
+        gdf_list, _ = visualization.create_animation_frames(gdf, hourly_prices)
+        
+        if gdf_list:
+            data_packages[year] = gdf_list
+            
+    # Visualisierung starten, wenn Daten vorhanden
+    if data_packages:
+        visualization.run_multi_year_visualization(data_packages, base_type_raw, script_dir)
+    else:
+        print("Keine Daten geladen. Abbruch.")
+        gui.show_error("Fehler", "Konnte keine Daten für den Vergleich laden.")
+
+
 def main():
     script_dir = Path(__file__).parent
     output_dir = script_dir.parent.parent / "output" / "figures"
@@ -239,11 +331,17 @@ def main():
             print("Programm beendet.")
             break
         
-        # Spezialfall: EPEX-Vergleich
+        # Fall 1: EPEX
         if selected_id == 'epex_comparison_2024':
             run_epex_comparison(script_dir, output_dir)
             continue
+            
+        # Fall 2: NEU - Multi-Year
+        if selected_id.startswith('multi_'):
+            run_multi_year_scenario(selected_id, script_dir, output_dir)
+            continue
         
+        # Fall 3: Single Scenario
         cfg = config.SCENARIOS[selected_id]
         run_single_scenario(selected_id, cfg, script_dir, output_dir)
 
