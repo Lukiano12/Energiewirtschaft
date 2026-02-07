@@ -1,5 +1,4 @@
 from pathlib import Path
-
 from . import gui, config, data_loader, geodata, visualization
 
 def run_epex_comparison(script_dir, output_dir):
@@ -16,7 +15,8 @@ def run_epex_comparison(script_dir, output_dir):
     print("EPEX-VERGLEICH: DURCHSCHNITTLICHER TAGESVERLAUF (0-24h)")
     print("="*70)
     
-    data_dir = script_dir / "resources"
+    # WICHTIG: Resources aus Config holen
+    data_dir = config.RESOURCES_DIR
     
     # 1) Lade Modellpreise
     cfg = config.SCENARIOS['de_single_2024']
@@ -128,6 +128,9 @@ def run_epex_comparison(script_dir, output_dir):
 
 def run_single_scenario(scenario_id, cfg, script_dir, output_dir):
     """Führt ein einzelnes Szenario aus."""
+    # WICHTIG: Resources aus Config holen
+    data_dir = config.RESOURCES_DIR
+    
     print(f"\nSzenario '{scenario_id}' wird geladen...")
     
     zone_names = cfg['zones']
@@ -138,8 +141,6 @@ def run_single_scenario(scenario_id, cfg, script_dir, output_dir):
         base_scenario = base_scenario.rsplit('_', 1)[0]
     
     gdf = geodata.create_germany_zones(base_scenario, zone_names)
-    
-    data_dir = script_dir / "resources"
     
     # --- Differenz-Szenario ---
     if '_diff_' in scenario_id:
@@ -319,12 +320,15 @@ def run_multi_year_scenario(multi_id, script_dir, output_dir):
 
 
 def main():
-    script_dir = Path(__file__).parent
-    output_dir = script_dir.parent.parent / "output" / "figures"
+    """Hauptfunktion - Einstiegspunkt des Programms."""
+    # WICHTIG: Pfade aus Config nutzen
+    script_dir = config.APP_DIR
+    output_dir = config.OUTPUT_DIR / "figures"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     scenario_ids = list(config.SCENARIOS.keys())
     
+    # Dialog für Szenario-Auswahl
     while True:
         selected_id = gui.scenario_selection(scenario_ids)
         if selected_id is None:

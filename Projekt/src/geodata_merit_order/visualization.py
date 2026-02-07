@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
+import matplotlib.patheffects as pe  # Wir importieren es als 'pe'
 import geopandas as gpd
 from pathlib import Path
 from tqdm import tqdm
@@ -174,61 +174,26 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
             missing_kwds={'color': '#cccccc'}
         )
         
+        # Labels
         for _, geo_row in data.iterrows():
             zone_name = geo_row['zone']
             p = geo_row['price']
-            
             pt = geo_row['geometry'].representative_point()
-            pt_x, pt_y = pt.x, pt.y
-            
             offsets = {
-                "TenneT": (0, -0.5),
-                "50Hertz": (0.2, -0.3),
-                "de": (0, 0),
-                "north": (0, 0.5),
-                "south": (0, -0.3),
+                "TenneT": (0, -0.6), "50Hertz": (0.3, -0.4), "de": (0, 0), 
+                "north": (0, 0.6), "south": (0, -0.4), "Amprion": (-0.2, 0), "TransnetBW": (0.1, -0.1)
             }
             dx, dy = offsets.get(zone_name, (0, 0))
-            pt_x += dx
-            pt_y += dy
             
-            display_names = {
-                'de': 'DEUTSCHLAND',
-                'north': 'NORD',
-                'south': 'SUED',
-            }
-            display_name = display_names.get(zone_name, zone_name)
-            
-            if pd.notna(p):
-                if is_diff_scenario:
-                    val_txt = f"{p:+.1f} EUR/MWh"
-                else:
-                    val_txt = f"{p:.1f} EUR/MWh"
-            else:
-                val_txt = "-"
+            val_txt = f"{p:+.0f}" if is_diff_scenario else f"{p:.0f}"
+            if pd.isna(p): val_txt = "-"
             
             ax.text(
-                pt_x, pt_y + 0.3, 
-                display_name, 
-                ha='center', va='bottom',
-                fontsize=10, 
-                color='#000000', 
-                fontweight='bold',
-                path_effects=[matplotlib.patheffects.withStroke(linewidth=3, foreground='white')],
-                zorder=10
+                pt.x + dx, pt.y + dy, f"{val_txt} €", ha='center', va='center',
+                fontsize=11, fontweight='bold', color='black',
+                path_effects=[pe.withStroke(linewidth=2, foreground='white')], zorder=10
             )
-            
-            ax.text(
-                pt_x, pt_y - 0.2, 
-                val_txt, 
-                ha='center', va='top',
-                fontsize=12, 
-                fontweight='bold', 
-                color='#000000',
-                path_effects=[matplotlib.patheffects.withStroke(linewidth=3, foreground='white')],
-                zorder=10
-            )
-        
+
         ax.set_xlim(5, 16)
         ax.set_ylim(47, 55.5)
         ax.set_title(f"{scenario_title}\n{title_str}", fontsize=14, fontweight='bold')
@@ -318,87 +283,106 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
                     else:
                         val_txt = "-"
                     
-                    ax_video.text(pt_x, pt_y, f"{zone_name}\n{val_txt}", ha='center', fontsize=8) 
-                    # Hinweis: Der obige Text-Block ist vereinfacht, nimm deinen existierenden Block!
-
-                ax_video.set_xlim(5, 16)
-                ax_video.set_ylim(47, 55.5)
-                ax_video.set_title(f"{scenario_title}\n{title_str}", fontsize=14, fontweight='bold')
-                ax_video.axis('off')
-
-                # Frame speichern
-                frame_path = os.path.join(temp_dir, f"frame_{i:04d}.png")
-                fig_video.savefig(frame_path, dpi=100, bbox_inches='tight', pad_inches=0.1)
-                frame_paths.append(frame_path)
-            
-            plt.close(fig_video)
-            
-            # --- TEIL 2: DATEIEN ERSTELLEN ---
-            print("\nErstelle Ausgabedateien...")
-            
-            # Bilder vorbereiten (gerade Dimensionen für MP4 wichtig)
-            first_frame = imageio.imread(frame_paths[0])
-            h, w = first_frame.shape[:2]
-            new_h = h if h % 2 == 0 else h - 1
-            new_w = w if w % 2 == 0 else w - 1
-            
-            saved_files_info = []
-
-            try:
-                # ---------------- MP4 EXPORT ----------------
-                if format_choice in ['mp4', 'both']:
-                    print(f"  Encoding MP4 ({new_w}x{new_h})...")
-                    writer = imageio.get_writer(
-                        str(mp4_path), 
-                        fps=config.VIDEO_SETTINGS['fps'],
-                        codec='libx264',
-                        quality=8,
-                        pixelformat='yuv420p',
-                        output_params=['-vf', f'scale={new_w}:{new_h}']
+                    ax_video.text(
+                        pt_x, pt_y + 0.3, 
+                        display_name, 
+                        ha='center', va='bottom',
+                        fontsize=10, 
+                        color='#000000', 
+                        fontweight='bold',
+                        path_effects=[pe.withStroke(linewidth=3, foreground='white')],
+                        zorder=10
                     )
                     
-                    for frame_path in tqdm(frame_paths, desc="  MP4 Writing", unit="frame", ncols=70):
-                        frame = imageio.imread(frame_path)
-                        frame = frame[:new_h, :new_w] # Zuschneiden
-                        writer.append_data(frame)
-                    
-                    writer.close()
-                    size_mb = mp4_path.stat().st_size / 1024 / 1024
-                    saved_files_info.append(f"MP4: {mp4_path.name} ({size_mb:.1f} MB)")
+                    ax_video.text(
+                        pt_x, pt_y - 0.2, 
+                        val_txt, 
+                        ha='center', va='top',
+                        fontsize=12, 
+                        fontweight='bold', 
+                        color='#000000',
+                        path_effects=[pe.withStroke(linewidth=3, foreground='white')],
+                        zorder=10
+                    )
+        
+        ax_video.set_xlim(5, 16)
+        ax_video.set_ylim(47, 55.5)
+        ax_video.set_title(f"{scenario_title}\n{title_str}", fontsize=14, fontweight='bold')
+        ax_video.axis('off')
 
-                # ---------------- GIF EXPORT ----------------
-                if format_choice in ['gif', 'both']:
-                    print(f"  Encoding GIF...")
-                    # GIFs lesen alle Frames ein
-                    images = []
-                    for frame_path in tqdm(frame_paths, desc="  GIF Writing", unit="frame", ncols=70):
-                         images.append(imageio.imread(frame_path))
-                    
-                    # loop=0 bedeutet Endlosschleife
-                    imageio.mimsave(str(gif_path), images, fps=config.VIDEO_SETTINGS['fps'], loop=0)
-                    
-                    size_mb = gif_path.stat().st_size / 1024 / 1024
-                    saved_files_info.append(f"GIF: {gif_path.name} ({size_mb:.1f} MB)")
+        # Frame speichern
+        frame_path = os.path.join(temp_dir, f"frame_{i:04d}.png")
+        fig_video.savefig(frame_path, dpi=100, bbox_inches='tight', pad_inches=0.1)
+        frame_paths.append(frame_path)
+            
+    plt.close(fig_video)
+            
+    # --- TEIL 2: DATEIEN ERSTELLEN ---
+    print("\nErstelle Ausgabedateien...")
+    
+    # Bilder vorbereiten (gerade Dimensionen für MP4 wichtig)
+    first_frame = imageio.imread(frame_paths[0])
+    h, w = first_frame.shape[:2]
+    new_h = h if h % 2 == 0 else h - 1
+    new_w = w if w % 2 == 0 else w - 1
+    
+    saved_files_info = []
 
-                # ---------------- ABSCHLUSS ----------------
-                duration = len(gdf_list) / config.VIDEO_SETTINGS['fps']
-                
-                print("\n" + "="*60)
-                print("EXPORT ERFOLGREICH!")
-                print("="*60)
-                for info in saved_files_info:
-                    print(f"  {info}")
-                print(f"  Dauer: {duration:.1f} Sekunden")
-                print("="*60 + "\n")
-                
-                gui.show_info(
-                    "Export erfolgreich", 
-                    f"Gespeichert in:\n{output_dir}\n\n" + "\n".join(saved_files_info)
-                )
-                
-            except Exception as e:
-                print(f"\nFEHLER beim Export: {e}")
-                gui.show_error("Export fehlgeschlagen", f"Fehler: {e}")
+    try:
+        # ---------------- MP4 EXPORT ----------------
+        if format_choice in ['mp4', 'both']:
+            print(f"  Encoding MP4 ({new_w}x{new_h})...")
+            writer = imageio.get_writer(
+                str(mp4_path), 
+                fps=config.VIDEO_SETTINGS['fps'],
+                codec='libx264',
+                quality=8,
+                pixelformat='yuv420p',
+                output_params=['-vf', f'scale={new_w}:{new_h}']
+            )
+            
+            for frame_path in tqdm(frame_paths, desc="  MP4 Writing", unit="frame", ncols=70):
+                frame = imageio.imread(frame_path)
+                frame = frame[:new_h, :new_w] # Zuschneiden
+                writer.append_data(frame)
+            
+            writer.close()
+            size_mb = mp4_path.stat().st_size / 1024 / 1024
+            saved_files_info.append(f"MP4: {mp4_path.name} ({size_mb:.1f} MB)")
+
+        # ---------------- GIF EXPORT ----------------
+        if format_choice in ['gif', 'both']:
+            print(f"  Encoding GIF...")
+            # GIFs lesen alle Frames ein
+            images = []
+            for frame_path in tqdm(frame_paths, desc="  GIF Writing", unit="frame", ncols=70):
+                 images.append(imageio.imread(frame_path))
+            
+            # loop=0 bedeutet Endlosschleife
+            imageio.mimsave(str(gif_path), images, fps=config.VIDEO_SETTINGS['fps'], loop=0)
+            
+            size_mb = gif_path.stat().st_size / 1024 / 1024
+            saved_files_info.append(f"GIF: {gif_path.name} ({size_mb:.1f} MB)")
+
+        # ---------------- ABSCHLUSS ----------------
+        duration = len(gdf_list) / config.VIDEO_SETTINGS['fps']
+        
+        print("\n" + "="*60)
+        print("EXPORT ERFOLGREICH!")
+        print("="*60)
+        for info in saved_files_info:
+            print(f"  {info}")
+        print(f"  Dauer: {duration:.1f} Sekunden")
+        print("="*60 + "\n")
+        
+        gui.show_info(
+            "Export erfolgreich", 
+            f"Gespeichert in:\n{output_dir}\n\n" + "\n".join(saved_files_info)
+        )
+        
+    except Exception as e:
+        print(f"\nFEHLER beim Export: {e}")
+        gui.show_error("Export fehlgeschlagen", f"Fehler: {e}")
 
     def on_key(event):
         curr = slider.val

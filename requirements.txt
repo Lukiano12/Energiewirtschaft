@@ -12,3 +12,4 @@ shapely
 tqdm
 imageio
 imageio-ffmpeg
+pyinstaller
