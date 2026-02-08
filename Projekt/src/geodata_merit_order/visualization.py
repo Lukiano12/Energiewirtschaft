@@ -9,11 +9,12 @@ from . import gui, config
 import shutil
 from matplotlib.widgets import Slider
 from shapely.geometry import box
+import imageio.v2 as imageio
+import matplotlib as mpl  # Hinzufügen
 
 # Matplotlib Animation Importe explizit
 from matplotlib.animation import PillowWriter, FFMpegWriter, FuncAnimation
 import os
-import imageio
 
 def calculate_hourly_prices(res_loads, merit_orders, zone_names, direct_prices=None):
     """Berechnet die stuendlichen Preise."""
@@ -207,103 +208,95 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
     
     slider.on_changed(on_slider_change)
 
+    # --- VIDEO FUNKTION ---
     def save_video():
-        """Exportiert die Animation als MP4-Video und/oder GIF."""
-        
-        # FRAGE NACH FORMAT
+        # User fragen welches Format
         format_choice = gui.ask_video_format()
-        if not format_choice:
-            print("Export abgebrochen.")
-            return
-            
-        print("\n" + "="*60)
-        print(f"EXPORT GESTARTET ({format_choice.upper()})")
-        print("="*60)
+        if not format_choice: return
+
+        print("Starte Video-Export...")
         
-        # Output-Pfad im geodata_merit_order Ordner
-        output_dir = script_dir / "videos"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Dateinamen vorbereiten (auf Desktop/Output_Dir)
+        import time
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        filename_base = f"{scenario_id}_{timestamp}"
         
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        base_filename = f"merit_order_{scenario_id}_{timestamp}"
+        # KORREKTUR 1: Pfade kommen aus config, nicht manuell basteln
+        mp4_path = config.OUTPUT_DIR / f"{filename_base}.mp4"
+        gif_path = config.OUTPUT_DIR / f"{filename_base}.gif"
+
+        # KORREKTUR 2: FFMPEG Pfad explizit setzen
+        if config.FFMPEG_PATH.exists():
+            mpl.rcParams['animation.ffmpeg_path'] = str(config.FFMPEG_PATH)
+            print(f"  Nutze lokales FFMPEG: {config.FFMPEG_PATH}")
+        else:
+            print(f"  WARNUNG: Lokales FFMPEG nicht gefunden unter {config.FFMPEG_PATH}")
+
+        # Separate Figure für das Video erstellen (sauberer)
+        print("  Erstelle Frames für Video...")
+        fig_video, ax_video = plt.subplots(figsize=(10, 14), dpi=100)
         
-        # Pfade definieren
-        mp4_path = output_dir / f"{base_filename}.mp4"
-        gif_path = output_dir / f"{base_filename}.gif"
-        
-        print(f"  Verzeichnis: {output_dir}")
-        print(f"  Frames: {len(gdf_list)}")
-        print(f"  FPS: {config.VIDEO_SETTINGS['fps']}")
-        print("-"*60)
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # --- TEIL 1: FRAMES RENDERN (Gleich für MP4 und GIF) ---
-            frame_paths = []
-            
-            # Figure mit fester Groesse
-            fig_video, ax_video = plt.subplots(figsize=(10, 14), dpi=100)
-            
-            cbar_video = fig_video.colorbar(sm, ax=ax_video, orientation='horizontal', 
+        cbar_video = fig_video.colorbar(sm, ax=ax_video, orientation='horizontal', 
                                             pad=0.05, aspect=40, shrink=0.8)
-            cbar_video.set_label(cbar_label, fontsize=10)
-            
-            print("\nErstelle Frames...")
-            for i in tqdm(range(len(gdf_list)), desc="  Rendering", unit="frame", 
+        cbar_video.set_label(cbar_label, fontsize=10)
+        
+        print("\nErstelle Frames...")
+        for i in tqdm(range(len(gdf_list)), desc="  Rendering", unit="frame", 
                          ncols=70, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'):
+            
+            ax_video.clear()
+            data = gdf_list[i]
+            title_str = data['label_title'].iloc[0]
+            scenario_title = scenario_titles.get(scenario_id, scenario_id)
+            
+            if bg_map is not None:
+                bg_map.plot(ax=ax_video, facecolor='#dce6f2', edgecolor='#999999', linewidth=0.5)
+            
+            data.plot(column='price', ax=ax_video, cmap=cmap, vmin=vmin, vmax=vmax,
+                alpha=0.85, edgecolor='#005b96', linewidth=2, missing_kwds={'color': '#cccccc'})
+            
+            # Labels plotten (stark verkürzt hier dargestellt, Code bleibt gleich)
+            for _, geo_row in data.iterrows():
+                zone_name = geo_row['zone']
+                p = geo_row['price']
+                pt = geo_row['geometry'].representative_point()
+                pt_x, pt_y = pt.x, pt.y
                 
-                ax_video.clear()
-                data = gdf_list[i]
-                title_str = data['label_title'].iloc[0]
-                scenario_title = scenario_titles.get(scenario_id, scenario_id)
+                offsets = {"TenneT": (0, -0.5), "50Hertz": (0.2, -0.3), 
+                          "north": (0, 0.5), "south": (0, -0.3)}
+                dx, dy = offsets.get(zone_name, (0, 0))
+                pt_x += dx
+                pt_y += dy
                 
-                if bg_map is not None:
-                    bg_map.plot(ax=ax_video, facecolor='#dce6f2', edgecolor='#999999', linewidth=0.5)
+                display_names = {'de': 'DEUTSCHLAND', 'north': 'NORD', 'south': 'SUED'}
+                display_name = display_names.get(zone_name, zone_name)
                 
-                data.plot(column='price', ax=ax_video, cmap=cmap, vmin=vmin, vmax=vmax,
-                    alpha=0.85, edgecolor='#005b96', linewidth=2, missing_kwds={'color': '#cccccc'})
+                if pd.notna(p):
+                    val_txt = f"{p:+.1f} EUR/MWh" if is_diff_scenario else f"{p:.1f} EUR/MWh"
+                else:
+                    val_txt = "-"
                 
-                # Labels plotten (stark verkürzt hier dargestellt, Code bleibt gleich)
-                for _, geo_row in data.iterrows():
-                    zone_name = geo_row['zone']
-                    p = geo_row['price']
-                    pt = geo_row['geometry'].representative_point()
-                    pt_x, pt_y = pt.x, pt.y
-                    
-                    offsets = {"TenneT": (0, -0.5), "50Hertz": (0.2, -0.3), 
-                              "north": (0, 0.5), "south": (0, -0.3)}
-                    dx, dy = offsets.get(zone_name, (0, 0))
-                    pt_x += dx
-                    pt_y += dy
-                    
-                    display_names = {'de': 'DEUTSCHLAND', 'north': 'NORD', 'south': 'SUED'}
-                    display_name = display_names.get(zone_name, zone_name)
-                    
-                    if pd.notna(p):
-                        val_txt = f"{p:+.1f} EUR/MWh" if is_diff_scenario else f"{p:.1f} EUR/MWh"
-                    else:
-                        val_txt = "-"
-                    
-                    ax_video.text(
-                        pt_x, pt_y + 0.3, 
-                        display_name, 
-                        ha='center', va='bottom',
-                        fontsize=10, 
-                        color='#000000', 
-                        fontweight='bold',
-                        path_effects=[pe.withStroke(linewidth=3, foreground='white')],
-                        zorder=10
-                    )
-                    
-                    ax_video.text(
-                        pt_x, pt_y - 0.2, 
-                        val_txt, 
-                        ha='center', va='top',
-                        fontsize=12, 
-                        fontweight='bold', 
-                        color='#000000',
-                        path_effects=[pe.withStroke(linewidth=3, foreground='white')],
-                        zorder=10
-                    )
+                ax_video.text(
+                    pt_x, pt_y + 0.3, 
+                    display_name, 
+                    ha='center', va='bottom',
+                    fontsize=10, 
+                    color='#000000', 
+                    fontweight='bold',
+                    path_effects=[pe.withStroke(linewidth=3, foreground='white')],
+                    zorder=10
+                )
+                
+                ax_video.text(
+                    pt_x, pt_y - 0.2, 
+                    val_txt, 
+                    ha='center', va='top',
+                    fontsize=12, 
+                    fontweight='bold', 
+                    color='#000000',
+                    path_effects=[pe.withStroke(linewidth=3, foreground='white')],
+                    zorder=10
+                )
         
         ax_video.set_xlim(5, 16)
         ax_video.set_ylim(47, 55.5)
@@ -331,24 +324,14 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
     try:
         # ---------------- MP4 EXPORT ----------------
         if format_choice in ['mp4', 'both']:
-            print(f"  Encoding MP4 ({new_w}x{new_h})...")
-            writer = imageio.get_writer(
-                str(mp4_path), 
-                fps=config.VIDEO_SETTINGS['fps'],
-                codec='libx264',
-                quality=8,
-                pixelformat='yuv420p',
-                output_params=['-vf', f'scale={new_w}:{new_h}']
-            )
+            print(f"  Speichere MP4 (FFMpegWriter)...")
+            writer = FFMpegWriter(fps=config.VIDEO_SETTINGS['fps'], 
+                                      metadata=dict(artist='MeritOrderTool'), 
+                                      bitrate=config.VIDEO_SETTINGS['bitrate'])
             
-            for frame_path in tqdm(frame_paths, desc="  MP4 Writing", unit="frame", ncols=70):
-                frame = imageio.imread(frame_path)
-                frame = frame[:new_h, :new_w] # Zuschneiden
-                writer.append_data(frame)
-            
-            writer.close()
-            size_mb = mp4_path.stat().st_size / 1024 / 1024
-            saved_files_info.append(f"MP4: {mp4_path.name} ({size_mb:.1f} MB)")
+            anim = FuncAnimation(fig_video, lambda i: update_plot_for_video(i), frames=len(gdf_list))
+            anim.save(str(mp4_path), writer=writer, dpi=config.VIDEO_SETTINGS['dpi'])
+            saved_files_info.append(f"MP4: {mp4_path}")
 
         # ---------------- GIF EXPORT ----------------
         if format_choice in ['gif', 'both']:
@@ -375,15 +358,12 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
         print(f"  Dauer: {duration:.1f} Sekunden")
         print("="*60 + "\n")
         
-        gui.show_info(
-            "Export erfolgreich", 
-            f"Gespeichert in:\n{output_dir}\n\n" + "\n".join(saved_files_info)
-        )
-        
+        gui.show_info("Export erfolgreich", f"Dateien gespeichert auf Desktop:\n" + "\n".join([str(p) for p in saved_files_info]))
+            
     except Exception as e:
-        print(f"\nFEHLER beim Export: {e}")
-        gui.show_error("Export fehlgeschlagen", f"Fehler: {e}")
-
+        print(f"  FEHLER beim Speichern: {e}")
+        gui.show_error("Export fehlgeschlagen", f"Fehler: {e}\n\nIst ffmpeg.exe im resources Ordner?")
+        
     def on_key(event):
         curr = slider.val
         if event.key == 'right':
@@ -536,13 +516,28 @@ def run_multi_year_visualization(data_packages, scenario_base_id, script_dir):
         if not target_format: return
 
         print("Start Video-Export... (Bitte warten)")
-        base_filename = script_dir.parent.parent / "output" / "figures" / f"Multi_{scenario_base_id.replace('multi_', '')}"
+        
+        # KORREKTUR 1: Feste Verwendung des Config-Pads (Desktop)
+        # Alte fehlerhafte Zeile: base_filename = script_dir.parent.parent / "output"...
+        import time
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        base_filename = config.OUTPUT_DIR / f"Multi_{scenario_base_id.replace('multi_', '')}_{timestamp}"
         
         anim = FuncAnimation(fig, update_all, frames=num_frames, interval=500, blit=False)
         
-        # FFmpeg Check
-        ffmpeg_available = shutil.which("ffmpeg") is not None
+        # KORREKTUR 2: FFMPEG explizit setzen & prüfen
+        ffmpeg_available = False
+        if config.FFMPEG_PATH.exists():
+            mpl.rcParams['animation.ffmpeg_path'] = str(config.FFMPEG_PATH)
+            ffmpeg_available = True
+            print(f"  Nutze lokales FFMPEG: {config.FFMPEG_PATH}")
+        elif shutil.which("ffmpeg") is not None:
+            ffmpeg_available = True
+            print("  Nutze System-FFMPEG.")
         
+        # Ordner erstellen falls nicht existent (sollte config schon machen, aber sicher ist sicher)
+        config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
         if target_format in ['mp4', 'both']:
             if ffmpeg_available:
                 try:
@@ -555,7 +550,7 @@ def run_multi_year_visualization(data_packages, scenario_base_id, script_dir):
                     print(f"  FEHLER beim MP4-Export: {e}")
             else:
                 print("  WARNUNG: FFmpeg nicht gefunden. MP4 übersprungen.")
-                gui.show_error("Fehler", "FFmpeg fehlt. MP4 kann nicht erstellt werden.")
+                # gui.show_error("Fehler", "FFmpeg fehlt. MP4 kann nicht erstellt werden.") # Optional
 
         if target_format in ['gif', 'both'] or (target_format == 'mp4' and not ffmpeg_available):
             try:
@@ -567,7 +562,7 @@ def run_multi_year_visualization(data_packages, scenario_base_id, script_dir):
             except Exception as e:
                 print(f"  FEHLER beim GIF-Export: {e}")
 
-        gui.show_info("Export fertig", "Dateien im output-Ordner gespeichert.")
+        gui.show_info("Export fertig", f"Dateien auf Desktop gespeichert:\n{config.OUTPUT_DIR}")
 
     def on_key(event):
         if event.key == 'right': slider.set_val(min(slider.val + 1, slider.valmax))

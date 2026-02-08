@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import copy_metadata
 
 datas = []
 binaries = []
-hiddenimports = ['pandas', 'numpy', 'matplotlib', 'matplotlib.pyplot', 'matplotlib.backends.backend_tkagg', 'openpyxl', 'tqdm', 'PIL', 'geopandas', 'shapely', 'shapely.geometry', 'tkinter', 'imageio', 'json']
+hiddenimports = ['pandas', 'numpy', 'matplotlib', 'matplotlib.pyplot', 'matplotlib.backends.backend_tkagg', 'openpyxl', 'tqdm', 'PIL', 'geopandas', 'shapely', 'tkinter', 'imageio', 'imageio_ffmpeg']
 datas += copy_metadata('imageio')
 datas += copy_metadata('tqdm')
 datas += copy_metadata('scipy')
@@ -17,8 +17,8 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['src\\run.py'],
-    pathex=['src'],
+    ['C:\\Users\\User\\Desktop\\Energiewirtschaft\\Projekt\\src\\run.py'],
+    pathex=['C:\\Users\\User\\Desktop\\Energiewirtschaft\\Projekt\\src'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

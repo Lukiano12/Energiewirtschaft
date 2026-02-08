@@ -3,6 +3,7 @@ Konfiguration für die Merit-Order Visualisierung.
 Definiert alle verfügbaren Szenarien und deren Parameter.
 """
 from pathlib import Path
+import os
 import sys
 
 # ============================================================================
@@ -12,20 +13,32 @@ import sys
 # Bestimmen, ob wir als EXE oder als Python-Skript laufen
 if getattr(sys, 'frozen', False):
     # FALL: Fertige .EXE Datei
-    # APP_DIR = Ordner wo die .exe liegt
+    # Der temporäre Ordner des Entpackers (PyInstaller _MEI...)
+    # ODER der Ordner wo die EXE liegt, je nach Bündelung.
+    # Sicherer Ansatz für Daten: sys.executable parent
     APP_DIR = Path(sys.executable).parent
     IS_FROZEN = True
+    
+    # Speicherort auf Desktop zwingen (wegen Schreibrechten)
+    OUTPUT_DIR = Path.home() / "Desktop" / "Energiewirtschaft_Output"
+    
+    # FFMPEG Pfad in der EXE (muss beim Bauen mit --add-binary hinzugefügt werden)
+    # Wenn wir es in 'resources' legen, finden wir es so:
+    FFMPEG_PATH = APP_DIR / "resources" / "ffmpeg.exe"
+    
 else:
     # FALL: Python Entwicklung
-    # APP_DIR = Ordner wo config.py liegt (src/geodata_merit_order)
     APP_DIR = Path(__file__).resolve().parent
     IS_FROZEN = False
+    OUTPUT_DIR = APP_DIR / "output"
+    
+    # Pfad im Entwicklungsmodus
+    FFMPEG_PATH = APP_DIR / "resources" / "ffmpeg.exe"
 
-# Der Resources-Ordner liegt NEBEN der Anwendung (editierbar für Endnutzer!)
+# Ressourcen-Ordner
 RESOURCES_DIR = APP_DIR / "resources"
 
-# Output-Ordner für Videos und Bilder
-OUTPUT_DIR = APP_DIR / "output"
+# Sicherstellen, dass Output-Ordner existiert
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Pfad zur EPEX-Datei
