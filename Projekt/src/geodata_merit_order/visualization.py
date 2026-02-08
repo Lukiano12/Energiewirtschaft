@@ -9,6 +9,12 @@ from . import gui, config
 import shutil
 from matplotlib.widgets import Slider
 from shapely.geometry import box
+import numpy as np
+import pandas as pd
+import imageio
+import tempfile
+import os
+import matplotlib.patheffects
 
 # Matplotlib Animation Importe explizit
 from matplotlib.animation import PillowWriter, FFMpegWriter, FuncAnimation
@@ -151,6 +157,28 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
     cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', pad=0.02, aspect=40, shrink=0.8)
     cbar.set_label(cbar_label, fontsize=10)
 
+    # --- GLOBALE STATISTIK BERECHNEN (STATISCH) ---
+    all_prices = []
+    for frame_gdf in gdf_list:
+        if 'price' in frame_gdf.columns:
+            vals = frame_gdf['price'].dropna().values
+            if len(vals) > 0:
+                all_prices.append(vals)
+    
+    if all_prices:
+        flat_prices = np.concatenate(all_prices)
+        s_min = np.min(flat_prices)
+        s_max = np.max(flat_prices)
+        s_mean = np.mean(flat_prices)
+        
+        # Statische Info-Box
+        stats_text_str = (f"STATISTIK (GESAMT):\n"
+                          f"Min: {s_min:6.1f} €\n"
+                          f"Max: {s_max:6.1f} €\n"
+                          f"Ø:   {s_mean:6.1f} €")
+    else:
+        stats_text_str = "Keine Daten"
+
     def update_plot(frame_idx):
         frame_idx = int(frame_idx)
         ax.clear()
@@ -174,6 +202,17 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
             missing_kwds={'color': '#cccccc'}
         )
         
+        # --- STATISCHE INFO BOX DISPLAY ---
+        ax.text(
+            0.02, 0.98, stats_text_str, 
+            transform=ax.transAxes, 
+            fontsize=9, 
+            fontfamily='monospace',
+            verticalalignment='top', 
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='#cccccc'),
+            zorder=100
+        )
+
         for _, geo_row in data.iterrows():
             zone_name = geo_row['zone']
             p = geo_row['price']
@@ -243,83 +282,72 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
     slider.on_changed(on_slider_change)
 
     def save_video():
-        """Exportiert die Animation als MP4-Video und/oder GIF."""
-        
-        # FRAGE NACH FORMAT
+        """Speichert Video als MP4 oder GIF mittels imageio (ohne externe FFmpeg-Installation)."""
         format_choice = gui.ask_video_format()
         if not format_choice:
-            print("Export abgebrochen.")
             return
-            
-        print("\n" + "="*60)
-        print(f"EXPORT GESTARTET ({format_choice.upper()})")
-        print("="*60)
+
+        filename = f"Video_{scenario_id}"
+        mp4_path = script_dir.parent.parent / "output" / "videos" / f"{filename}.mp4"
+        gif_path = script_dir.parent.parent / "output" / "videos" / f"{filename}.gif"
         
-        # Output-Pfad im geodata_merit_order Ordner
-        output_dir = script_dir / "videos"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        mp4_path.parent.mkdir(parents=True, exist_ok=True)
         
-        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        base_filename = f"merit_order_{scenario_id}_{timestamp}"
+        print(f"\nStarte Video-Export ({len(gdf_list)} Frames)...")
+        print("Bitte warten, dies kann einen Moment dauern.")
         
-        # Pfade definieren
-        mp4_path = output_dir / f"{base_filename}.mp4"
-        gif_path = output_dir / f"{base_filename}.gif"
-        
-        print(f"  Verzeichnis: {output_dir}")
-        print(f"  Frames: {len(gdf_list)}")
-        print(f"  FPS: {config.VIDEO_SETTINGS['fps']}")
-        print("-"*60)
-        
+        # Temporäres Verzeichnis für Einzelbilder
         with tempfile.TemporaryDirectory() as temp_dir:
-            # --- TEIL 1: FRAMES RENDERN (Gleich für MP4 und GIF) ---
+            # --- TEIL 1: FRAMES RENDERN ---
             frame_paths = []
             
-            # Figure mit fester Groesse
+            # Separate Figure für Export (sauberer als GUI-Figure)
             fig_video, ax_video = plt.subplots(figsize=(10, 14), dpi=100)
             
             cbar_video = fig_video.colorbar(sm, ax=ax_video, orientation='horizontal', 
                                             pad=0.05, aspect=40, shrink=0.8)
             cbar_video.set_label(cbar_label, fontsize=10)
             
-            print("\nErstelle Frames...")
-            for i in tqdm(range(len(gdf_list)), desc="  Rendering", unit="frame", 
-                         ncols=70, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'):
-                
+            print("  Rendere Frames...")
+            # Deaktiviere Interactivity für schnelleres Rendering
+            plt.ioff()
+            
+            for i in tqdm(range(len(gdf_list)), desc="  Fortschritt", unit="frame", ncols=80):
                 ax_video.clear()
                 data = gdf_list[i]
                 title_str = data['label_title'].iloc[0]
                 scenario_title = scenario_titles.get(scenario_id, scenario_id)
                 
+                # Plotting Logic kopiert
                 if bg_map is not None:
                     bg_map.plot(ax=ax_video, facecolor='#dce6f2', edgecolor='#999999', linewidth=0.5)
                 
                 data.plot(column='price', ax=ax_video, cmap=cmap, vmin=vmin, vmax=vmax,
-                    alpha=0.85, edgecolor='#005b96', linewidth=2, missing_kwds={'color': '#cccccc'})
-                
-                # Labels plotten (stark verkürzt hier dargestellt, Code bleibt gleich)
+                         alpha=0.85, edgecolor='#005b96', linewidth=2, missing_kwds={'color': '#cccccc'})
+
+                # Statische Info-Box auch im Video
+                ax_video.text(
+                    0.02, 0.98, stats_text_str, 
+                    transform=ax_video.transAxes, 
+                    fontsize=10, fontfamily='monospace', verticalalignment='top', 
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='#cccccc')
+                )
+
+                # Labels
                 for _, geo_row in data.iterrows():
                     zone_name = geo_row['zone']
-                    p = geo_row['price']
+                    val = geo_row['price']
                     pt = geo_row['geometry'].representative_point()
                     pt_x, pt_y = pt.x, pt.y
                     
-                    offsets = {"TenneT": (0, -0.5), "50Hertz": (0.2, -0.3), 
-                              "north": (0, 0.5), "south": (0, -0.3)}
-                    dx, dy = offsets.get(zone_name, (0, 0))
-                    pt_x += dx
-                    pt_y += dy
+                    if pd.isna(val): val_txt = "n/a"
+                    else: val_txt = f"{val:.1f} €"
+
+                    if zone_name == 'node_north': pt_y += 0.5
                     
-                    display_names = {'de': 'DEUTSCHLAND', 'north': 'NORD', 'south': 'SUED'}
-                    display_name = display_names.get(zone_name, zone_name)
-                    
-                    if pd.notna(p):
-                        val_txt = f"{p:+.1f} EUR/MWh" if is_diff_scenario else f"{p:.1f} EUR/MWh"
-                    else:
-                        val_txt = "-"
-                    
-                    ax_video.text(pt_x, pt_y, f"{zone_name}\n{val_txt}", ha='center', fontsize=8) 
-                    # Hinweis: Der obige Text-Block ist vereinfacht, nimm deinen existierenden Block!
+                    ax_video.text(pt_x, pt_y, f"{zone_name}\n{val_txt}", ha='center', fontsize=9,
+                                  fontweight='bold',
+                                  path_effects=[matplotlib.patheffects.withStroke(linewidth=2, foreground='white')])
 
                 ax_video.set_xlim(5, 16)
                 ax_video.set_ylim(47, 55.5)
@@ -332,73 +360,50 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
                 frame_paths.append(frame_path)
             
             plt.close(fig_video)
+            plt.ion() # Interactivity wieder an
             
-            # --- TEIL 2: DATEIEN ERSTELLEN ---
-            print("\nErstelle Ausgabedateien...")
+            # --- TEIL 2: VIDEO ZUSAMMENSETZEN ---
+            print("  Erstelle Videodatei(en)...")
             
-            # Bilder vorbereiten (gerade Dimensionen für MP4 wichtig)
-            first_frame = imageio.imread(frame_paths[0])
-            h, w = first_frame.shape[:2]
-            new_h = h if h % 2 == 0 else h - 1
-            new_w = w if w % 2 == 0 else w - 1
+            # Erstes Bild laden für Dimensionen
+            first_img = imageio.imread(frame_paths[0])
+            h, w = first_img.shape[:2]
             
-            saved_files_info = []
-
-            try:
-                # ---------------- MP4 EXPORT ----------------
-                if format_choice in ['mp4', 'both']:
-                    print(f"  Encoding MP4 ({new_w}x{new_h})...")
+            # Dimensionen müssen für Codecs oft durch 16 teilbar sein (wichtig für MP4)
+            new_h = h - (h % 16)
+            new_w = w - (w % 16)
+            
+            if format_choice in ['mp4', 'both']:
+                try:
                     writer = imageio.get_writer(
                         str(mp4_path), 
-                        fps=config.VIDEO_SETTINGS['fps'],
-                        codec='libx264',
+                        fps=8, 
+                        codec='libx264', 
                         quality=8,
                         pixelformat='yuv420p',
-                        output_params=['-vf', f'scale={new_w}:{new_h}']
+                        macro_block_size=None # Tolerant gegenüber ungeraden Größen
                     )
                     
-                    for frame_path in tqdm(frame_paths, desc="  MP4 Writing", unit="frame", ncols=70):
-                        frame = imageio.imread(frame_path)
-                        frame = frame[:new_h, :new_w] # Zuschneiden
-                        writer.append_data(frame)
-                    
+                    for fpath in frame_paths:
+                        img = imageio.imread(fpath)
+                        # Zuschneiden auf kompatible Größe
+                        img_cropped = img[:new_h, :new_w]
+                        writer.append_data(img_cropped)
+                        
                     writer.close()
-                    size_mb = mp4_path.stat().st_size / 1024 / 1024
-                    saved_files_info.append(f"MP4: {mp4_path.name} ({size_mb:.1f} MB)")
+                    print(f"  ✅ MP4 gespeichert: {mp4_path}")
+                except Exception as e:
+                    print(f"  ❌ MP4 Fehler: {e}")
+            
+            if format_choice in ['gif', 'both']:
+                try:
+                    images = [imageio.imread(f) for f in frame_paths]
+                    imageio.mimsave(str(gif_path), images, fps=8, loop=0)
+                    print(f"  ✅ GIF gespeichert: {gif_path}")
+                except Exception as e:
+                    print(f"  ❌ GIF Fehler: {e}")
 
-                # ---------------- GIF EXPORT ----------------
-                if format_choice in ['gif', 'both']:
-                    print(f"  Encoding GIF...")
-                    # GIFs lesen alle Frames ein
-                    images = []
-                    for frame_path in tqdm(frame_paths, desc="  GIF Writing", unit="frame", ncols=70):
-                         images.append(imageio.imread(frame_path))
-                    
-                    # loop=0 bedeutet Endlosschleife
-                    imageio.mimsave(str(gif_path), images, fps=config.VIDEO_SETTINGS['fps'], loop=0)
-                    
-                    size_mb = gif_path.stat().st_size / 1024 / 1024
-                    saved_files_info.append(f"GIF: {gif_path.name} ({size_mb:.1f} MB)")
-
-                # ---------------- ABSCHLUSS ----------------
-                duration = len(gdf_list) / config.VIDEO_SETTINGS['fps']
-                
-                print("\n" + "="*60)
-                print("EXPORT ERFOLGREICH!")
-                print("="*60)
-                for info in saved_files_info:
-                    print(f"  {info}")
-                print(f"  Dauer: {duration:.1f} Sekunden")
-                print("="*60 + "\n")
-                
-                gui.show_info(
-                    "Export erfolgreich", 
-                    f"Gespeichert in:\n{output_dir}\n\n" + "\n".join(saved_files_info)
-                )
-                
-            except Exception as e:
-                print(f"\nFEHLER beim Export: {e}")
-                gui.show_error("Export fehlgeschlagen", f"Fehler: {e}")
+        gui.show_info("Export abgeschlossen", "Video-Dateien wurden erstellt.")
 
     def on_key(event):
         curr = slider.val
@@ -430,165 +435,221 @@ def run_visualization(gdf_list, monthly_profiles, zone_names, scenario_id, scrip
     print("Steuerung:")
     print("  <- ->    Stunde vor/zurueck")
     print("  Pfeil hoch/runter  Monat vor/zurueck (+/-24 Frames)")
-    print("  Home     Zum Anfang")
-    print("  End      Zum Ende")
-    print("  V        VIDEO EXPORTIEREN (MP4)")
-    print("="*50 + "\n")
-    
-    plt.show()
+
 
 def run_multi_year_visualization(data_packages, scenario_base_id, script_dir):
     """
-    Visualisiert mehrere Jahre (2024, 2037, 2045) nebeneinander.
-    data_packages: Dictionary {year: gdf_list}
+    Visualisiert mehrere Jahre nebeneinander (z.B. 2024, 2037, 2045) mit Statistiken.
     """
-    years = sorted(data_packages.keys())
-    if not years:
-        print("Keine Daten für Multi-View vorhanden.")
-        return
+    import matplotlib.pyplot as plt
+    import geopandas as gpd
+    import numpy as np
 
-    is_diff_scenario = 'diff' in scenario_base_id
+    # Einheitliche Farbskala ermitteln
+    is_diff = 'diff' in scenario_base_id
+    scale_cfg = config.DIFF_SCALE if is_diff else config.PRICE_SCALE
+    vmin = scale_cfg.get('vmin', -50 if is_diff else 0)
+    vmax = scale_cfg['vmax']
+    cmap = scale_cfg['cmap']
 
-    # Hintergrundkarte laden
+    # Hintergrundkarte laden (optional)
+    bg_map = None
     try:
-        world_map = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
-        bg_map = world_map.clip(box(3, 46, 17, 56))
+        # Versuch, lokale oder Online-Daten zu laden
+        world = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+        bg_map = world.cx[5:16, 47:56]
     except:
-        bg_map = None
+        pass
 
-    # --- SKALIERUNG ---
-    if is_diff_scenario:
-        vmax = config.DIFF_SCALE['vmax']
-        vmin = -vmax
-        cmap = config.DIFF_SCALE['cmap']
-        cbar_label = 'Preisdifferenz (Coupled - Insel) [EUR/MWh]'
-    else:
-        vmin = config.PRICE_SCALE['vmin']
-        vmax = config.PRICE_SCALE['vmax']
-        cmap = config.PRICE_SCALE['cmap']
-        cbar_label = 'Strompreis [EUR/MWh]'
-        
-    print(f"  Multi-View Skalierung: {vmin} bis {vmax} (einheitlich)")
-
+    n_years = len(data_packages)
+    # Figure erstellen (Breite abhängig von Anzahl der Jahre)
+    fig, axes = plt.subplots(1, n_years, figsize=(5 * n_years, 8))
+    if n_years == 1: 
+        axes = [axes]
+    
+    plt.subplots_adjust(bottom=0.2, top=0.85, wspace=0.1, left=0.05, right=0.95)
+    
+    # Gemeinsame Colorbar
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+    cbar_ax = fig.add_axes([0.2, 0.12, 0.6, 0.02])
+    fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
+    cbar_ax.set_label("Strompreis [EUR/MWh]" if not is_diff else "Preisdifferenz [EUR/MWh]", fontsize=10)
 
-    # Figure Setup: WICHTIG - constrained_layout=False verhindert den Konflikt mit subplots_adjust
-    fig, axes = plt.subplots(1, len(years), figsize=(18, 10), constrained_layout=False)
-    
-    if len(years) == 1: axes = [axes]
-    
-    fig.canvas.manager.set_window_title(f'Merit-Order Vergleich: {scenario_base_id}')
-    
-    # Manuelles Layout: Platz unten reservieren
-    plt.subplots_adjust(left=0.05, right=0.95, top=0.90, bottom=0.2, wspace=0.15)
-    
-    num_frames = len(data_packages[years[0]])
-
-    def plot_single_year(ax, year, frame_idx):
-        ax.clear()
-        gdf_list = data_packages[year]
-        if frame_idx >= len(gdf_list): return ""
-
-        data = gdf_list[frame_idx]
-        title_common = data['label_title'].iloc[0] 
+    # --- STATISTIKEN BERECHNEN (PRO JAHR) ---
+    stats_per_year = []
+    for pkg in data_packages:
+        all_prices = []
+        # Alle Frames durchgehen, um Min/Max/Avg für das ganze Jahr zu finden
+        for frame_gdf in pkg['gdf_list']:
+            if 'price' in frame_gdf.columns:
+                vals = frame_gdf['price'].dropna().values
+                if len(vals) > 0:
+                    all_prices.append(vals)
         
-        if bg_map is not None:
-            bg_map.plot(ax=ax, facecolor='#dce6f2', edgecolor='#999999', linewidth=0.5)
-        
-        data.plot(
-            column='price', ax=ax, cmap=cmap, vmin=vmin, vmax=vmax,
-            alpha=0.9, edgecolor='#005b96', linewidth=1.5,
-            missing_kwds={'color': '#cccccc'}
-        )
-        
-        # Labels
-        for _, geo_row in data.iterrows():
-            zone_name = geo_row['zone']
-            p = geo_row['price']
-            pt = geo_row['geometry'].representative_point()
-            offsets = {
-                "TenneT": (0, -0.6), "50Hertz": (0.3, -0.4), "de": (0, 0), 
-                "north": (0, 0.6), "south": (0, -0.4), "Amprion": (-0.2, 0), "TransnetBW": (0.1, -0.1)
-            }
-            dx, dy = offsets.get(zone_name, (0, 0))
-            
-            val_txt = f"{p:+.0f}" if is_diff_scenario else f"{p:.0f}"
-            if pd.isna(p): val_txt = "-"
-            
-            ax.text(
-                pt.x + dx, pt.y + dy, f"{val_txt} €", ha='center', va='center',
-                fontsize=11, fontweight='bold', color='black',
-                path_effects=[pe.withStroke(linewidth=2, foreground='white')], zorder=10
-            )
+        if all_prices:
+            flat = np.concatenate(all_prices)
+            # Textblock erstellen
+            txt = (f"Min: {np.min(flat):.0f}\n"
+                   f"Max: {np.max(flat):.0f}\n"
+                   f"Ø:   {np.mean(flat):.0f} €")
+        else:
+            txt = "-"
+        stats_per_year.append(txt)
 
-        ax.set_xlim(5, 16)
-        ax.set_ylim(47, 55.5)
-        ax.set_title(f"Jahr {year}", fontsize=16, fontweight='bold', color='#333333')
-        ax.axis('off')
-        return title_common
-
-    def update_all(val):
-        frame_idx = int(val)
-        main_title = ""
-        for i, year in enumerate(years):
-            t = plot_single_year(axes[i], year, frame_idx)
-            if i == 0: main_title = t
-        fig.suptitle(f"Vergleich: {scenario_base_id.upper()}\n{main_title}", fontsize=15, fontweight='bold')
-
-    update_all(0)
-
-    # Colorbar
-    cbar = fig.colorbar(sm, ax=axes, orientation='horizontal', fraction=0.05, pad=0.05, shrink=0.6)
-    cbar.set_label(cbar_label, fontsize=12)
-
-    # Slider
+    # Slider Steuerung
     ax_slider = plt.axes([0.2, 0.05, 0.6, 0.03])
-    slider = Slider(ax_slider, 'Zeit', 0, num_frames - 1, valinit=0, valstep=1)
-    slider.on_changed(lambda val: (update_all(val), fig.canvas.draw_idle()))
-    
-    # --- VIDEO EXPORT ---
+    num_frames = len(data_packages[0]['gdf_list'])
+    slider = Slider(ax_slider, 'Stunde', 0, num_frames - 1, valinit=0, valstep=1)
+
+    def update_plot(val):
+        frame_idx = int(val)
+        
+        # Titel basierend auf Zeit von erstem Datensatz
+        time_label = data_packages[0]['gdf_list'][frame_idx]['label_title'].iloc[0]
+        fig.suptitle(f"Szenario-Vergleich: {scenario_base_id}\n{time_label}", fontsize=16, fontweight='bold')
+
+        for i, pkg in enumerate(data_packages):
+            ax = axes[i]
+            ax.clear()
+            
+            gdf = pkg['gdf_list'][frame_idx]
+            year = pkg['year']
+            
+            # Hintergrund
+            if bg_map is not None:
+                bg_map.plot(ax=ax, facecolor='#eeeeee', edgecolor='#bbbbbb', linewidth=0.5)
+            
+            # Daten plotten
+            gdf.plot(column='price', ax=ax, cmap=cmap, vmin=vmin, vmax=vmax,
+                     edgecolor='#666666', linewidth=0.5)
+            
+            # --- STATISTIK-BOX ANZEIGEN ---
+            # Oben links in jedem Subplot
+            ax.text(0.03, 0.97, stats_per_year[i], transform=ax.transAxes,
+                    fontsize=10, fontfamily='monospace', va='top', ha='left',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='#cccccc'),
+                    zorder=100)
+
+            # Werte in die Karte schreiben (Preise)
+            for _, row in gdf.iterrows():
+                if not pd.isna(row['price']):
+                    pt = row['geometry'].representative_point()
+                    # Bei Nord-Sued Layout etwas verschieben
+                    py = pt.y
+                    if row.get('zone') == 'north': py += 0.3
+                    
+                    ax.annotate(f"{row['price']:.0f}", (pt.x, py), 
+                                ha='center', va='center', fontsize=9, fontweight='bold',
+                                path_effects=[matplotlib.patheffects.withStroke(linewidth=2, foreground='white')])
+
+            ax.set_title(f"Jahr {year}", fontsize=14)
+            ax.axis('off')
+            # Zoom auf Deutschland (ungefähr)
+            ax.set_xlim(5.5, 15.5)
+            ax.set_ylim(47, 55.5)
+            
+        fig.canvas.draw_idle()
+
+    slider.on_changed(update_plot)
+    update_plot(0) # Initial draw
+
+    # --- VIDEO EXPORT (Robust/ImageIO) ---
     def save_video_multi():
-        target_format = gui.ask_video_format()  # mp4, gif, both, None
-        if not target_format: return
-
-        print("Start Video-Export... (Bitte warten)")
-        base_filename = script_dir.parent.parent / "output" / "figures" / f"Multi_{scenario_base_id.replace('multi_', '')}"
+        format_choice = gui.ask_video_format()
+        if not format_choice: return
         
-        anim = FuncAnimation(fig, update_all, frames=num_frames, interval=500, blit=False)
-        
-        # FFmpeg Check
-        ffmpeg_available = shutil.which("ffmpeg") is not None
-        
-        if target_format in ['mp4', 'both']:
-            if ffmpeg_available:
-                try:
-                    mp4_path = f"{base_filename}.mp4"
-                    print(f"  Speichere MP4: {mp4_path}")
-                    writer = FFMpegWriter(fps=2, bitrate=3000)
-                    anim.save(mp4_path, writer=writer)
-                    print("  -> MP4 OK.")
-                except Exception as e:
-                    print(f"  FEHLER beim MP4-Export: {e}")
-            else:
-                print("  WARNUNG: FFmpeg nicht gefunden. MP4 übersprungen.")
-                gui.show_error("Fehler", "FFmpeg fehlt. MP4 kann nicht erstellt werden.")
+        print(f"\nStarte Multi-Year Video Export ({num_frames} Frames)...")
+        filename = f"Zeitreihe_{scenario_base_id}"
+        out_path_mp4 = script_dir.parent.parent / "output" / "videos" / f"{filename}.mp4"
+        out_path_gif = script_dir.parent.parent / "output" / "videos" / f"{filename}.gif"
+        out_path_mp4.parent.mkdir(parents=True, exist_ok=True)
 
-        if target_format in ['gif', 'both'] or (target_format == 'mp4' and not ffmpeg_available):
-            try:
-                gif_path = f"{base_filename}.gif"
-                print(f"  Speichere GIF: {gif_path}")
-                writer_gif = PillowWriter(fps=2)
-                anim.save(gif_path, writer=writer_gif)
-                print("  -> GIF OK.")
-            except Exception as e:
-                print(f"  FEHLER beim GIF-Export: {e}")
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                frame_paths = []
+                # Eigene Figure für Export (sauberer)
+                f_ex, ax_ex = plt.subplots(1, n_years, figsize=(6 * n_years, 8), dpi=100)
+                if n_years == 1: ax_ex = [ax_ex]
+                
+                plt.ioff() # Keine GUI Updates
+                
+                for fi in tqdm(range(num_frames), desc="  Rendering", ncols=80):
+                    time_lbl = data_packages[0]['gdf_list'][fi]['label_title'].iloc[0]
+                    f_ex.suptitle(f"{scenario_base_id} : {time_lbl}", fontsize=16)
+                    
+                    for i, pkg in enumerate(data_packages):
+                        ax = ax_ex[i]
+                        ax.clear()
+                        gdf = pkg['gdf_list'][fi]
+                        
+                        if bg_map is not None: bg_map.plot(ax=ax, facecolor='#eee', edgecolor='#bbb')
+                        
+                        gdf.plot(column='price', ax=ax, cmap=cmap, vmin=vmin, vmax=vmax, edgecolor='#555')
+                        
+                        # Stats auch im Video
+                        ax.text(0.03, 0.97, stats_per_year[i], transform=ax.transAxes,
+                                fontsize=11, fontfamily='monospace', va='top',
+                                bbox=dict(facecolor='white', alpha=0.8))
+                        
+                        # Labels
+                        for _, row in gdf.iterrows():
+                             if not pd.isna(row['price']):
+                                pt = row['geometry'].representative_point()
+                                ax.text(pt.x, pt.y, f"{row['price']:.0f}", ha='center', fontsize=9, fontweight='bold',
+                                        path_effects=[matplotlib.patheffects.withStroke(linewidth=2, foreground='white')])
+                        
+                        ax.set_title(f"{pkg['year']}")
+                        ax.axis('off')
+                        ax.set_xlim(5.5, 15.5)
+                        ax.set_ylim(47, 55.5)
 
-        gui.show_info("Export fertig", "Dateien im output-Ordner gespeichert.")
+                    path = os.path.join(temp_dir, f"f_{fi:04d}.png")
+                    f_ex.savefig(path, bbox_inches='tight')
+                    frame_paths.append(path)
+                
+                plt.close(f_ex)
+                plt.ion()
 
-    def on_key(event):
-        if event.key == 'right': slider.set_val(min(slider.val + 1, slider.valmax))
-        elif event.key == 'left': slider.set_val(max(slider.val - 1, slider.valmin))
-        elif event.key.lower() == 'v': save_video_multi()
+                # Speichern mit imageio
+                print("  Erstelle Videodatei...")
+                img0 = imageio.imread(frame_paths[0])
+                h, w = img0.shape[:2]
+                nh, nw = h - (h%16), w - (w%16) # Dimensionen gerade machen
 
-    fig.canvas.mpl_connect('key_press_event', on_key)
+                if format_choice in ['mp4', 'both']:
+                    writer = imageio.get_writer(str(out_path_mp4), fps=8, codec='libx264', quality=8, pixelformat='yuv420p', macro_block_size=None)
+                    for p in frame_paths:
+                        im = imageio.imread(p)
+                        writer.append_data(im[:nh, :nw])
+                    writer.close()
+                    print(f"  MP4 gespeichert: {out_path_mp4.name}")
+
+                if format_choice in ['gif', 'both']:
+                    # GIF speichern (vereinfacht)
+                    images = [imageio.imread(p) for p in frame_paths]
+                    imageio.mimsave(str(out_path_gif), images, fps=8)
+                    print(f"  GIF gespeichert: {out_path_gif.name}")
+
+            gui.show_info("Export fertig", f"Video gespeichert in output/videos")
+
+        except Exception as e:
+            print(f"ERROR: {e}")
+            gui.show_error("Fehler", str(e))
+
+
+    def on_key_multi(event):
+        if event.key == 'right':
+            slider.set_val(min(slider.val + 1, slider.valmax))
+        elif event.key == 'left':
+            slider.set_val(max(slider.val - 1, slider.valmin))
+        elif event.key == 'v':
+            save_video_multi()
+
+    fig.canvas.mpl_connect('key_press_event', on_key_multi)
+    
+    print("\n" + "="*50)
+    print("ZEITREISE VISUALISIERUNG GESTARTET")
+    print("Taste 'v' druecken fuer Video-Export")
+    print("="*50)
+
     plt.show()
