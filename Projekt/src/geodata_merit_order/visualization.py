@@ -265,24 +265,62 @@ def run_multi_year_visualization(data_packages, scenario_base_id, script_dir):
         cmap = config.PRICE_SCALE['cmap']
         cbar_label = 'Strompreis [EUR/MWh]'
     
-    # --- STATISTIKEN BERECHNEN (PRO JAHR) ---
+    # --- STATISTIKEN BERECHNEN (PRO JAHR MIT ZONEN-INFO) ---
     stats_per_year = []
     for pkg in packages_sorted:
-        all_prices = []
-        # Datenzugriff vereinheitlichen
         gdf_list = pkg['gdf_list'] if isinstance(pkg, dict) else pkg
         
+        all_vals = []
+        max_val = -float('inf')
+        min_val = float('inf')
+        max_zones = set()
+        min_zones = set()
+
         for frame_gdf in gdf_list:
-            if 'price' in frame_gdf.columns:
-                vals = frame_gdf['price'].dropna().values
-                if len(vals) > 0:
-                    all_prices.append(vals)
+            if frame_gdf.empty or 'price' not in frame_gdf.columns: continue
+            
+            # Drop NaN für Berechnung
+            valid = frame_gdf.dropna(subset=['price'])
+            if valid.empty: continue
+            
+            prices = valid['price'].values
+            all_vals.extend(prices)
+            
+            # Frame Max/Min
+            f_max = prices.max()
+            f_min = prices.min()
+            
+            # Global Max Update
+            if f_max > max_val:
+                max_val = f_max
+                # Zonen zurücksetzen, neu befüllen
+                max_zones = set(valid[valid['price'] == f_max]['zone'].unique())
+            elif f_max == max_val:
+                # Zonen hinzufügen
+                max_zones.update(valid[valid['price'] == f_max]['zone'].unique())
+                
+            # Global Min Update
+            if f_min < min_val:
+                min_val = f_min
+                min_zones = set(valid[valid['price'] == f_min]['zone'].unique())
+            elif f_min == min_val:
+                min_zones.update(valid[valid['price'] == f_min]['zone'].unique())
         
-        if all_prices:
-            flat = np.concatenate(all_prices)
+        if all_vals:
+            flat = np.array(all_vals)
+            
+            # Zonen-String formatieren (kurz halten)
+            def fmt_z(z_set):
+                lst = sorted(list(z_set))
+                if len(lst) == 1: return f"({lst[0]})"
+                if len(lst) == 2: return f"({'/'.join(lst)})"
+                if len(lst) > 2 and 'de' in lst: return "(DE)" # Fallback für Single Zone
+                if len(lst) > 2: return "(Div.)" # Platz sparen
+                return ""
+
             txt = (f"STATISTIK (JAHR):\n"
-                   f"Min: {np.min(flat):4.0f} €\n"
-                   f"Max: {np.max(flat):4.0f} €\n"
+                   f"Min: {min_val:4.0f} € {fmt_z(min_zones)}\n"
+                   f"Max: {max_val:4.0f} € {fmt_z(max_zones)}\n"
                    f"Ø:   {np.mean(flat):4.0f} €")
         else:
             txt = "-"
