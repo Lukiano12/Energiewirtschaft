@@ -11,6 +11,12 @@ DATA_DIR = PROJECT_ROOT / "data"
 SMARD_DIR = DATA_DIR / "smard"
 RESOURCES_DIR = SCRIPT_DIR / "resources"
 
+# NEU: Ordner für Video-Exports definieren
+VIDEOS_DIR = SCRIPT_DIR / "videos"
+
+# NEU: Pfad zur manuell heruntergeladenen ffmpeg.exe
+FFMPEG_BINARY = RESOURCES_DIR / "ffmpeg.exe"
+
 # Verfügbare Jahre
 AVAILABLE_YEARS = [2024, 2037, 2045]
 
